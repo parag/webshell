@@ -38,6 +38,10 @@ db.exec(`
     tmux_name TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
+  CREATE TABLE IF NOT EXISTS auth_tokens (
+    token TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
 `);
 
 function getPasswordHash() {
@@ -58,7 +62,22 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
 const PORT = process.env.PORT || 3000;
-const tokens = new Set();
+
+// --- Token management (SQLite-backed) ---
+const tokens = {
+  add(token) {
+    db.prepare('INSERT OR IGNORE INTO auth_tokens (token) VALUES (?)').run(token);
+  },
+  has(token) {
+    return !!db.prepare('SELECT 1 FROM auth_tokens WHERE token = ?').get(token);
+  },
+  delete(token) {
+    db.prepare('DELETE FROM auth_tokens WHERE token = ?').run(token);
+  },
+  clear() {
+    db.prepare('DELETE FROM auth_tokens').run();
+  },
+};
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
