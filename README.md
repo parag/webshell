@@ -47,13 +47,27 @@ After setup, run certbot for HTTPS:
 sudo certbot --nginx -d YOUR_DOMAIN
 ```
 
-The script prints your generated password. It's saved in `.env`.
+The script generates a random password and saves it to `.env`. It prints the password at the end — save it somewhere safe.
 
-### Manual start (without systemd)
+### Manual setup (without setup.sh)
+
+Create a `.env` file in the project root:
 
 ```bash
-source .env
-node server.js
+TERM_PASSWORD=your-secure-password-here
+PORT=3000
+```
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TERM_PASSWORD` | Yes | Password for the web login |
+| `PORT` | No | Server port (default: 3000) |
+
+Then install dependencies and start:
+
+```bash
+npm install
+source .env && node server.js
 ```
 
 ## Usage
