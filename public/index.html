@@ -117,7 +117,6 @@
   .connection-status.connected { color: #3fb950; background: rgba(63,185,80,0.1); }
   .connection-status.disconnected { color: #f85149; background: rgba(248,81,73,0.1); }
   #terminal-container { flex: 1; overflow: hidden; touch-action: none; }
-
   /* --- Sidebar --- */
   .sidebar-backdrop {
     display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
@@ -298,6 +297,7 @@
     <button class="btn-hamburger sidebar-trigger"><div class="hamburger-lines"><span></span><span></span><span></span></div></button>
     <button class="btn-back" id="terminal-back-btn">&larr;</button>
     <span class="terminal-title" id="terminal-title"></span>
+    <button id="paste-btn" style="background:none;border:1px solid #30363d;color:#8b949e;font-size:16px;cursor:pointer;padding:4px 10px;margin-left:8px;border-radius:6px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center;touch-action:manipulation;" title="Paste">&#x1f4cb;</button>
     <span class="connection-status connected" id="conn-status">Connected</span>
   </div>
   <div id="terminal-container"></div>
@@ -826,20 +826,57 @@
     const resizeObserver = new ResizeObserver(() => { if (fitAddon) fitAddon.fit(); });
     resizeObserver.observe(terminalContainer);
 
-    // Swipe right on terminal → send Tab (autocomplete)
+    // Mobile touch gestures: vertical scroll + horizontal swipe right
     let touchStartX = 0;
     let touchStartY = 0;
+    let lastTouchY = 0;
     terminalContainer.addEventListener('touchstart', e => {
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
-    });
+      lastTouchY = touchStartY;
+    }, { passive: true });
+    terminalContainer.addEventListener('touchmove', e => {
+      const currentY = e.touches[0].clientY;
+      const deltaY = lastTouchY - currentY;
+      lastTouchY = currentY;
+      // Convert vertical touch drag to wheel events for xterm.js/tmux scroll
+      if (Math.abs(deltaY) > 2) {
+        const xtermEl = terminalContainer.querySelector('.xterm');
+        if (xtermEl) {
+          xtermEl.dispatchEvent(new WheelEvent('wheel', {
+            deltaY: deltaY * 3,
+            bubbles: true,
+            cancelable: true,
+          }));
+        }
+      }
+    }, { passive: true });
     terminalContainer.addEventListener('touchend', e => {
       const dx = e.changedTouches[0].clientX - touchStartX;
       const dy = Math.abs(e.changedTouches[0].clientY - touchStartY);
-      // Swipe right: >60px horizontal, <30px vertical drift
+      // Swipe right: >60px horizontal, <30px vertical drift → accept autosuggestion
       if (dx > 60 && dy < 30 && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data: '\t' }));
+        ws.send(JSON.stringify({ type: 'input', data: '\x1b[F' }));
+        terminalContainer.style.outline = '2px solid #3fb950';
+        setTimeout(() => { terminalContainer.style.outline = ''; }, 200);
       }
+    }, { passive: true });
+
+    // Paste button handler
+    document.getElementById('paste-btn').addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'input', data: text }));
+        }
+      } catch (err) {
+        // Fallback: prompt user if clipboard API denied
+        const text = prompt('Paste text:');
+        if (text && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'input', data: text }));
+        }
+      }
+      term.focus();
     });
 
     term.focus();
