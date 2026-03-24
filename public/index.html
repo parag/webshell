@@ -825,6 +825,23 @@
 
     const resizeObserver = new ResizeObserver(() => { if (fitAddon) fitAddon.fit(); });
     resizeObserver.observe(terminalContainer);
+
+    // Swipe right on terminal → send Tab (autocomplete)
+    let touchStartX = 0;
+    let touchStartY = 0;
+    terminalContainer.addEventListener('touchstart', e => {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    terminalContainer.addEventListener('touchend', e => {
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      const dy = Math.abs(e.changedTouches[0].clientY - touchStartY);
+      // Swipe right: >60px horizontal, <30px vertical drift
+      if (dx > 60 && dy < 30 && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data: '\t' }));
+      }
+    }, { passive: true });
+
     term.focus();
   }
 
