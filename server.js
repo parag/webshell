@@ -338,6 +338,7 @@ wss.on('connection', (ws, req) => {
     env: { ...process.env, TERM: 'xterm-256color' },
   });
 
+
   term.onData((data) => {
     if (ws.readyState === 1) {
       ws.send(JSON.stringify({ type: 'output', data }));
