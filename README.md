@@ -2,6 +2,16 @@
 
 A mobile-first web terminal that connects to your server via the browser. Powered by tmux — sessions persist across disconnects.
 
+## Why I built this
+
+I wanted a personal replacement for Claw and other terminal cloud tools — something I fully own, running on my own server, accessible from any device via a URL.
+
+**Why not just SSH + tmux?** I use that too. But having a URL I can open from my phone, a borrowed laptop, or a tablet — without an SSH client — is genuinely useful. And the project/session organization is something tmux alone doesn't give you without a wrapper.
+
+**Why not Claw / Wetty / code-server?** Claw is closed-source and someone else's server. Wetty is SSH-over-HTTP which adds a layer I don't need on my own box. code-server is great but heavy — I just want terminals, not an IDE.
+
+This is ~300 lines of server code. No build step, no framework. One script to set up on a fresh Ubuntu box.
+
 ## Features
 
 - **Project organization** — group terminal sessions into projects; delete a project to terminate all its sessions
