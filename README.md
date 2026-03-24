@@ -7,7 +7,8 @@ A mobile-first web terminal that connects to your server via the browser. Powere
 - **Project organization** — group terminal sessions into projects; delete a project to terminate all its sessions
 - **Persistent sessions** — powered by tmux; close the browser, come back later, pick up where you left off
 - **First-visit setup** — no config files needed; set your password on first visit
-- **Change password** — update your password anytime from the settings gear icon
+- **Quick session switching** — slide-out sidebar lets you jump between any session across all projects
+- **Change password** — update your password anytime from the sidebar settings
 - **Mobile-optimized** — full-screen terminal with touch support, virtual keyboard handling
 - **Secure** — HTTPS via Let's Encrypt, bcrypt-hashed password, no unnecessary open ports
 - **Autosuggestions** — zsh + oh-my-zsh + zsh-autosuggestions out of the box
@@ -81,7 +82,8 @@ Visit `http://localhost:3000` — the first-visit setup screen will prompt you t
 4. Open a project, tap **+ New** to create a terminal session
 5. Tap any session to resume it
 6. Tap **←** to detach (session stays alive)
-7. Tap the **gear icon** on the projects page to change your password
+7. Tap the **hamburger menu** (top-left) to open the sidebar — switch between any session across all projects without navigating back
+8. Tap **Settings** in the sidebar to change your password
 
 ## Architecture
 
