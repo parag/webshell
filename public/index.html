@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overscroll-behavior: none; }
 
   /* --- Setup & Login View --- */
   .auth-view {
@@ -116,7 +116,7 @@
   }
   .connection-status.connected { color: #3fb950; background: rgba(63,185,80,0.1); }
   .connection-status.disconnected { color: #f85149; background: rgba(248,81,73,0.1); }
-  #terminal-container { flex: 1; overflow: hidden; }
+  #terminal-container { flex: 1; overflow: hidden; touch-action: none; }
 
   /* --- Sidebar --- */
   .sidebar-backdrop {
@@ -832,7 +832,7 @@
     terminalContainer.addEventListener('touchstart', e => {
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
-    }, { passive: true });
+    });
     terminalContainer.addEventListener('touchend', e => {
       const dx = e.changedTouches[0].clientX - touchStartX;
       const dy = Math.abs(e.changedTouches[0].clientY - touchStartY);
@@ -840,7 +840,7 @@
       if (dx > 60 && dy < 30 && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data: '\t' }));
       }
-    }, { passive: true });
+    });
 
     term.focus();
   }
