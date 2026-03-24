@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0d1117">
+<title>Terminal</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+  /* --- Login View --- */
+  #login-view {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; padding: 24px;
+  }
+  #login-view h1 { font-size: 24px; margin-bottom: 8px; font-weight: 600; }
+  #login-view p { color: #8b949e; margin-bottom: 32px; font-size: 14px; }
+  #login-view input {
+    width: 100%; max-width: 320px; padding: 14px 16px; font-size: 16px;
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    color: #e6edf3; outline: none; margin-bottom: 16px;
+  }
+  #login-view input:focus { border-color: #58a6ff; }
+  .btn {
+    padding: 14px 24px; font-size: 16px; font-weight: 600; border: none;
+    border-radius: 8px; cursor: pointer; transition: background 0.15s;
+    min-height: 48px; touch-action: manipulation;
+  }
+  .btn-primary { background: #238636; color: #fff; width: 100%; max-width: 320px; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .login-error { color: #f85149; font-size: 14px; margin-top: 12px; display: none; }
+
+  /* --- Sessions View --- */
+  #sessions-view { display: none; height: 100%; flex-direction: column; }
+  .sessions-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid #21262d;
+  }
+  .sessions-header h1 { font-size: 20px; font-weight: 600; }
+  .btn-new {
+    background: #238636; color: #fff; padding: 10px 18px; font-size: 14px;
+    font-weight: 600; border: none; border-radius: 8px; cursor: pointer;
+    min-height: 44px; touch-action: manipulation;
+  }
+  .btn-new:hover { background: #2ea043; }
+  .sessions-list { flex: 1; overflow-y: auto; padding: 12px 16px; -webkit-overflow-scrolling: touch; }
+  .session-card {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #161b22; border: 1px solid #21262d; border-radius: 10px;
+    padding: 16px; margin-bottom: 10px; cursor: pointer;
+    transition: border-color 0.15s; touch-action: manipulation;
+  }
+  .session-card:hover { border-color: #58a6ff; }
+  .session-card:active { background: #1c2129; }
+  .session-info h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .session-info p { font-size: 13px; color: #8b949e; }
+  .session-status { width: 8px; height: 8px; border-radius: 50%; margin-right: 10px; flex-shrink: 0; }
+  .session-status.attached { background: #3fb950; }
+  .session-status.detached { background: #8b949e; }
+  .session-delete {
+    background: none; border: none; color: #8b949e; font-size: 20px;
+    cursor: pointer; padding: 8px 12px; min-width: 44px; min-height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+  }
+  .session-delete:hover { color: #f85149; }
+  .sessions-empty {
+    text-align: center; color: #8b949e; padding: 60px 20px; font-size: 15px;
+  }
+  .sessions-empty span { font-size: 40px; display: block; margin-bottom: 16px; opacity: 0.5; }
+
+  /* --- Terminal View --- */
+  #terminal-view { display: none; height: 100%; flex-direction: column; }
+  .terminal-header {
+    display: flex; align-items: center; padding: 8px 12px;
+    background: #161b22; border-bottom: 1px solid #21262d; flex-shrink: 0;
+  }
+  .btn-back {
+    background: none; border: none; color: #8b949e; font-size: 22px;
+    cursor: pointer; padding: 8px; min-width: 44px; min-height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+  }
+  .btn-back:hover { color: #e6edf3; }
+  .terminal-title { font-size: 14px; color: #8b949e; margin-left: 8px; font-weight: 500; }
+  .connection-status {
+    margin-left: auto; font-size: 12px; padding: 4px 10px; border-radius: 12px;
+    font-weight: 500;
+  }
+  .connection-status.connected { color: #3fb950; background: rgba(63,185,80,0.1); }
+  .connection-status.disconnected { color: #f85149; background: rgba(248,81,73,0.1); }
+  #terminal-container { flex: 1; overflow: hidden; }
+
+  /* --- New Session Modal --- */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    z-index: 100; align-items: flex-end; justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: #161b22; border-top: 1px solid #30363d;
+    border-radius: 16px 16px 0 0; padding: 24px 20px 40px;
+    width: 100%; max-width: 480px;
+  }
+  .modal h2 { font-size: 18px; margin-bottom: 16px; }
+  .modal input {
+    width: 100%; padding: 14px 16px; font-size: 16px;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    color: #e6edf3; outline: none; margin-bottom: 16px;
+  }
+  .modal input:focus { border-color: #58a6ff; }
+  .modal-actions { display: flex; gap: 12px; }
+  .modal-actions .btn { flex: 1; }
+  .btn-secondary { background: #21262d; color: #e6edf3; }
+  .btn-secondary:hover { background: #30363d; }
+
+  /* Delete confirmation */
+  .confirm-bar {
+    display: none; background: #f8514926; border: 1px solid #f85149;
+    border-radius: 8px; padding: 12px 16px; margin-bottom: 10px;
+    align-items: center; justify-content: space-between;
+  }
+  .confirm-bar.active { display: flex; }
+  .confirm-bar p { font-size: 14px; color: #f85149; }
+  .btn-danger { background: #da3633; color: #fff; padding: 8px 16px; font-size: 14px; border-radius: 6px; }
+  .btn-danger:hover { background: #f85149; }
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-view">
+  <h1>Terminal</h1>
+  <p>Enter password to connect</p>
+  <input type="password" id="password-input" placeholder="Password" autocomplete="current-password">
+  <button class="btn btn-primary" id="login-btn">Sign In</button>
+  <div class="login-error" id="login-error">Wrong password</div>
+</div>
+
+<!-- Sessions -->
+<div id="sessions-view">
+  <div class="sessions-header">
+    <h1>Sessions</h1>
+    <button class="btn-new" id="new-session-btn">+ New</button>
+  </div>
+  <div class="sessions-list" id="sessions-list"></div>
+</div>
+
+<!-- Terminal -->
+<div id="terminal-view">
+  <div class="terminal-header">
+    <button class="btn-back" id="back-btn">&larr;</button>
+    <span class="terminal-title" id="terminal-title"></span>
+    <span class="connection-status connected" id="conn-status">Connected</span>
+  </div>
+  <div id="terminal-container"></div>
+</div>
+
+<!-- New Session Modal -->
+<div class="modal-overlay" id="new-modal">
+  <div class="modal">
+    <h2>New Session</h2>
+    <input type="text" id="session-name-input" placeholder="Session name (optional)" autocapitalize="off" autocorrect="off">
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="modal-create" style="max-width:none">Create</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+<script>
+(function() {
+  // State
+  let token = sessionStorage.getItem('token');
+  let currentWs = null;
+  let currentTerm = null;
+  let fitAddon = null;
+  let currentSession = null;
+
+  // Elements
+  const loginView = document.getElementById('login-view');
+  const sessionsView = document.getElementById('sessions-view');
+  const terminalView = document.getElementById('terminal-view');
+  const passwordInput = document.getElementById('password-input');
+  const loginBtn = document.getElementById('login-btn');
+  const loginError = document.getElementById('login-error');
+  const sessionsList = document.getElementById('sessions-list');
+  const newSessionBtn = document.getElementById('new-session-btn');
+  const backBtn = document.getElementById('back-btn');
+  const terminalTitle = document.getElementById('terminal-title');
+  const connStatus = document.getElementById('conn-status');
+  const terminalContainer = document.getElementById('terminal-container');
+  const newModal = document.getElementById('new-modal');
+  const sessionNameInput = document.getElementById('session-name-input');
+  const modalCancel = document.getElementById('modal-cancel');
+  const modalCreate = document.getElementById('modal-create');
+
+  // --- View management ---
+  function showView(view) {
+    loginView.style.display = 'none';
+    sessionsView.style.display = 'none';
+    terminalView.style.display = 'none';
+    if (view === 'login') loginView.style.display = 'flex';
+    else if (view === 'sessions') { sessionsView.style.display = 'flex'; loadSessions(); }
+    else if (view === 'terminal') terminalView.style.display = 'flex';
+  }
+
+  // --- API helpers ---
+  async function api(method, path, body) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(path, opts);
+    if (res.status === 401) { sessionStorage.removeItem('token'); token = null; showView('login'); throw new Error('Unauthorized'); }
+    return res.json();
+  }
+
+  // --- Login ---
+  async function login() {
+    loginBtn.disabled = true;
+    loginError.style.display = 'none';
+    try {
+      const data = await api('POST', '/api/login', { password: passwordInput.value });
+      token = data.token;
+      sessionStorage.setItem('token', token);
+      passwordInput.value = '';
+      showView('sessions');
+    } catch {
+      loginError.style.display = 'block';
+    } finally {
+      loginBtn.disabled = false;
+    }
+  }
+
+  loginBtn.addEventListener('click', login);
+  passwordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
+
+  // --- Sessions ---
+  let deleteTarget = null;
+
+  async function loadSessions() {
+    try {
+      const sessions = await api('GET', '/api/sessions');
+      if (sessions.length === 0) {
+        sessionsList.innerHTML = '<div class="sessions-empty"><span>&#9002;</span>No sessions yet.<br>Tap "+ New" to create one.</div>';
+        return;
+      }
+      sessionsList.innerHTML = sessions.map(s => {
+        const date = new Date(s.created);
+        const timeStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        return `
+          <div class="session-card" data-name="${s.name}">
+            <div class="session-status ${s.attached ? 'attached' : 'detached'}"></div>
+            <div class="session-info" style="flex:1">
+              <h3>${s.name}</h3>
+              <p>${s.windows} window${s.windows !== 1 ? 's' : ''} &middot; ${timeStr}</p>
+            </div>
+            <button class="session-delete" data-delete="${s.name}" title="Delete">&times;</button>
+          </div>`;
+      }).join('');
+    } catch {}
+  }
+
+  sessionsList.addEventListener('click', async (e) => {
+    const deleteBtn = e.target.closest('[data-delete]');
+    if (deleteBtn) {
+      e.stopPropagation();
+      const name = deleteBtn.dataset.delete;
+      if (confirm(`Delete session "${name}"?`)) {
+        try { await api('DELETE', `/api/sessions/${name}`); } catch {}
+        loadSessions();
+      }
+      return;
+    }
+    const card = e.target.closest('.session-card');
+    if (card) connectToSession(card.dataset.name);
+  });
+
+  // --- New session modal ---
+  newSessionBtn.addEventListener('click', () => {
+    sessionNameInput.value = '';
+    newModal.classList.add('active');
+    setTimeout(() => sessionNameInput.focus(), 100);
+  });
+  modalCancel.addEventListener('click', () => newModal.classList.remove('active'));
+  newModal.addEventListener('click', (e) => { if (e.target === newModal) newModal.classList.remove('active'); });
+
+  modalCreate.addEventListener('click', async () => {
+    const name = sessionNameInput.value.trim();
+    try {
+      const data = await api('POST', '/api/sessions', name ? { name } : {});
+      newModal.classList.remove('active');
+      connectToSession(data.name);
+    } catch {}
+  });
+  sessionNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') modalCreate.click(); });
+
+  // --- Terminal ---
+  function connectToSession(name) {
+    currentSession = name;
+    terminalTitle.textContent = name;
+    showView('terminal');
+
+    // Clean up previous
+    if (currentWs) { currentWs.close(); currentWs = null; }
+    if (currentTerm) { currentTerm.dispose(); currentTerm = null; }
+    terminalContainer.innerHTML = '';
+
+    // Create terminal
+    const term = new window.Terminal({
+      cursorBlink: true,
+      fontSize: 15,
+      fontFamily: "'Menlo', 'DejaVu Sans Mono', 'Consolas', monospace",
+      theme: {
+        background: '#0d1117',
+        foreground: '#e6edf3',
+        cursor: '#58a6ff',
+        selectionBackground: '#264f78',
+        black: '#484f58', red: '#ff7b72', green: '#3fb950', yellow: '#d29922',
+        blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39d353', white: '#b1bac4',
+        brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364',
+        brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#d2a8ff',
+        brightCyan: '#56d364', brightWhite: '#f0f6fc',
+      },
+      allowProposedApi: true,
+      scrollback: 5000,
+    });
+
+    fitAddon = new window.FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
+    term.open(terminalContainer);
+
+    setTimeout(() => { fitAddon.fit(); }, 50);
+
+    currentTerm = term;
+
+    // WebSocket
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&session=${encodeURIComponent(name)}`);
+    currentWs = ws;
+
+    ws.onopen = () => {
+      connStatus.textContent = 'Connected';
+      connStatus.className = 'connection-status connected';
+      // Send initial size
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'output') term.write(msg.data);
+      } catch {}
+    };
+
+    ws.onclose = () => {
+      connStatus.textContent = 'Disconnected';
+      connStatus.className = 'connection-status disconnected';
+    };
+
+    ws.onerror = () => {
+      connStatus.textContent = 'Disconnected';
+      connStatus.className = 'connection-status disconnected';
+    };
+
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data }));
+      }
+    });
+
+    term.onResize(({ cols, rows }) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
+    });
+
+    // Handle viewport resize (virtual keyboard, orientation change)
+    const resizeObserver = new ResizeObserver(() => {
+      if (fitAddon) fitAddon.fit();
+    });
+    resizeObserver.observe(terminalContainer);
+
+    // Focus terminal for immediate typing
+    term.focus();
+  }
+
+  // --- Back button ---
+  backBtn.addEventListener('click', () => {
+    if (currentWs) { currentWs.close(); currentWs = null; }
+    if (currentTerm) { currentTerm.dispose(); currentTerm = null; }
+    terminalContainer.innerHTML = '';
+    currentSession = null;
+    showView('sessions');
+  });
+
+  // --- Handle browser back ---
+  window.addEventListener('popstate', () => {
+    if (terminalView.style.display === 'flex') {
+      backBtn.click();
+    }
+  });
+
+  // --- Init ---
+  if (token) {
+    // Validate token by trying to load sessions
+    api('GET', '/api/sessions').then(() => showView('sessions')).catch(() => showView('login'));
+  } else {
+    showView('login');
+  }
+})();
+</script>
+</body>
+</html>
