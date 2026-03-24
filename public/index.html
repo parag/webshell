@@ -118,6 +118,92 @@
   .connection-status.disconnected { color: #f85149; background: rgba(248,81,73,0.1); }
   #terminal-container { flex: 1; overflow: hidden; }
 
+  /* --- Sidebar --- */
+  .sidebar-backdrop {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 199; touch-action: manipulation;
+  }
+  .sidebar-backdrop.open { display: block; }
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 280px; max-width: 80vw;
+    background: #161b22; border-right: 1px solid #21262d;
+    z-index: 200; transform: translateX(-100%); transition: transform 0.2s ease;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 16px 12px; border-bottom: 1px solid #21262d;
+  }
+  .sidebar-header h2 { font-size: 16px; font-weight: 600; }
+  .sidebar-close {
+    background: none; border: none; color: #8b949e; font-size: 22px;
+    cursor: pointer; padding: 4px 8px; min-width: 36px; min-height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+  }
+  .sidebar-close:hover { color: #e6edf3; }
+  .sidebar-content {
+    flex: 1; overflow-y: auto; padding: 8px 0; -webkit-overflow-scrolling: touch;
+  }
+  .sidebar-project {
+    user-select: none;
+  }
+  .sidebar-project-header {
+    display: flex; align-items: center; padding: 10px 16px;
+    cursor: pointer; font-size: 13px; font-weight: 600; color: #8b949e;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    touch-action: manipulation;
+  }
+  .sidebar-project-header:hover { color: #e6edf3; }
+  .sidebar-project-header .chevron {
+    margin-right: 8px; font-size: 10px; transition: transform 0.15s;
+    display: inline-block; width: 16px; text-align: center;
+  }
+  .sidebar-project-header .chevron.expanded { transform: rotate(90deg); }
+  .sidebar-sessions { display: none; }
+  .sidebar-sessions.expanded { display: block; }
+  .sidebar-session {
+    display: flex; align-items: center; padding: 10px 16px 10px 40px;
+    cursor: pointer; font-size: 14px; color: #e6edf3;
+    border-left: 3px solid transparent; touch-action: manipulation;
+    transition: background 0.1s;
+  }
+  .sidebar-session:hover { background: #1c2129; }
+  .sidebar-session:active { background: #21262d; }
+  .sidebar-session.active {
+    border-left-color: #58a6ff; background: rgba(88,166,255,0.08);
+  }
+  .sidebar-session .sb-dot {
+    width: 6px; height: 6px; border-radius: 50%; margin-right: 10px; flex-shrink: 0;
+  }
+  .sidebar-session .sb-dot.attached { background: #3fb950; }
+  .sidebar-session .sb-dot.detached { background: #8b949e; }
+  .sidebar-session .sb-dot.dead { background: #f85149; }
+  .sidebar-session .sb-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sidebar-empty { padding: 24px 16px; color: #484f58; font-size: 13px; text-align: center; }
+  .sidebar-footer {
+    border-top: 1px solid #21262d; padding: 12px 16px;
+  }
+  .sidebar-footer-btn {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: none; border: none; color: #8b949e; font-size: 14px;
+    cursor: pointer; padding: 8px; border-radius: 6px;
+    touch-action: manipulation;
+  }
+  .sidebar-footer-btn:hover { color: #e6edf3; background: #21262d; }
+
+  /* Hamburger */
+  .btn-hamburger {
+    background: none; border: none; color: #8b949e; font-size: 20px;
+    cursor: pointer; padding: 8px; min-width: 44px; min-height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation; border-radius: 8px;
+  }
+  .btn-hamburger:hover { color: #e6edf3; background: #21262d; }
+  .hamburger-lines { display: flex; flex-direction: column; gap: 4px; width: 18px; }
+  .hamburger-lines span { display: block; height: 2px; background: currentColor; border-radius: 1px; }
+
   /* --- Modal --- */
   .modal-overlay {
     display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
@@ -146,6 +232,19 @@
 </head>
 <body>
 
+<!-- Sidebar -->
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>Sessions</h2>
+    <button class="sidebar-close" id="sidebar-close">&times;</button>
+  </div>
+  <div class="sidebar-content" id="sidebar-content"></div>
+  <div class="sidebar-footer">
+    <button class="sidebar-footer-btn" id="sidebar-settings">&#9881; Settings</button>
+  </div>
+</div>
+
 <!-- Setup (first visit) -->
 <div id="setup-view" class="auth-view" style="display:none">
   <h1>Welcome to webshell</h1>
@@ -169,10 +268,12 @@
 <!-- Projects -->
 <div id="projects-view" style="display:none">
   <div class="view-header">
-    <h1>Projects</h1>
+    <div class="view-header-left">
+      <button class="btn-hamburger sidebar-trigger"><div class="hamburger-lines"><span></span><span></span><span></span></div></button>
+      <h1>Projects</h1>
+    </div>
     <div class="view-header-right">
       <button class="btn-new" id="new-project-btn">+ New</button>
-      <button class="btn-icon" id="settings-btn" title="Settings">&#9881;</button>
     </div>
   </div>
   <div class="item-list" id="projects-list"></div>
@@ -182,6 +283,7 @@
 <div id="sessions-view" style="display:none">
   <div class="view-header">
     <div class="view-header-left">
+      <button class="btn-hamburger sidebar-trigger"><div class="hamburger-lines"><span></span><span></span><span></span></div></button>
       <button class="btn-back" id="sessions-back-btn">&larr;</button>
       <h1 id="sessions-project-name"></h1>
     </div>
@@ -193,6 +295,7 @@
 <!-- Terminal -->
 <div id="terminal-view" style="display:none">
   <div class="terminal-header">
+    <button class="btn-hamburger sidebar-trigger"><div class="hamburger-lines"><span></span><span></span><span></span></div></button>
     <button class="btn-back" id="terminal-back-btn">&larr;</button>
     <span class="terminal-title" id="terminal-title"></span>
     <span class="connection-status connected" id="conn-status">Connected</span>
@@ -251,6 +354,7 @@
   let fitAddon = null;
   let currentProject = null;
   let currentSessionName = null;
+  let currentTmuxName = null;
 
   // --- API ---
   async function api(method, path, body) {
@@ -275,11 +379,114 @@
     allViews.forEach(v => {
       document.getElementById(v + '-view').style.display = 'none';
     });
-    const el = document.getElementById(name + '-view');
-    el.style.display = (name === 'setup' || name === 'login') ? 'flex' : (name === 'projects' || name === 'sessions' || name === 'terminal') ? 'flex' : 'none';
+    document.getElementById(name + '-view').style.display = 'flex';
     if (name === 'projects') loadProjects();
     if (name === 'sessions') loadSessions();
   }
+
+  // --- Sidebar ---
+  const sidebar = document.getElementById('sidebar');
+  const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+  const sidebarContent = document.getElementById('sidebar-content');
+  let sidebarExpanded = {}; // track which projects are expanded
+
+  function openSidebar() {
+    sidebar.classList.add('open');
+    sidebarBackdrop.classList.add('open');
+    loadSidebarData();
+  }
+
+  function closeSidebar() {
+    sidebar.classList.remove('open');
+    sidebarBackdrop.classList.remove('open');
+    // Re-focus terminal if we're in terminal view
+    if (document.getElementById('terminal-view').style.display === 'flex' && currentTerm) {
+      currentTerm.focus();
+    }
+  }
+
+  document.querySelectorAll('.sidebar-trigger').forEach(btn => {
+    btn.addEventListener('click', openSidebar);
+  });
+  document.getElementById('sidebar-close').addEventListener('click', closeSidebar);
+  sidebarBackdrop.addEventListener('click', closeSidebar);
+
+  document.getElementById('sidebar-settings').addEventListener('click', () => {
+    closeSidebar();
+    // Open change password modal
+    const cpCurrent = document.getElementById('cp-current');
+    const cpNew = document.getElementById('cp-new');
+    const cpConfirm = document.getElementById('cp-confirm');
+    cpCurrent.value = ''; cpNew.value = ''; cpConfirm.value = '';
+    document.getElementById('cp-error').style.display = 'none';
+    document.getElementById('cp-success').style.display = 'none';
+    document.getElementById('password-modal').classList.add('active');
+    setTimeout(() => cpCurrent.focus(), 100);
+  });
+
+  async function loadSidebarData() {
+    try {
+      const projects = await apiJson('GET', '/api/projects');
+      if (projects.length === 0) {
+        sidebarContent.innerHTML = '<div class="sidebar-empty">No projects yet</div>';
+        return;
+      }
+      // Fetch sessions for all projects in parallel
+      const sessionsData = await Promise.all(
+        projects.map(p => apiJson('GET', `/api/projects/${p.id}/sessions`).then(sessions => ({ ...p, sessions })))
+      );
+
+      sidebarContent.innerHTML = sessionsData.map(p => {
+        const isExpanded = sidebarExpanded[p.id] !== undefined ? sidebarExpanded[p.id] : true;
+        const sessionsHtml = p.sessions.map(s => {
+          const statusClass = !s.alive ? 'dead' : s.attached ? 'attached' : 'detached';
+          const isActive = s.tmux_name === currentTmuxName;
+          return `<div class="sidebar-session${isActive ? ' active' : ''}" data-sb-tmux="${s.tmux_name}" data-sb-name="${s.name}" data-sb-project-id="${p.id}" data-sb-project-name="${p.name}">
+            <div class="sb-dot ${statusClass}"></div>
+            <span class="sb-name">${s.name}</span>
+          </div>`;
+        }).join('');
+
+        return `<div class="sidebar-project">
+          <div class="sidebar-project-header" data-sb-toggle="${p.id}">
+            <span class="chevron${isExpanded ? ' expanded' : ''}">&#9656;</span>
+            ${p.name}
+          </div>
+          <div class="sidebar-sessions${isExpanded ? ' expanded' : ''}" data-sb-project="${p.id}">
+            ${sessionsHtml || '<div class="sidebar-empty" style="padding:8px 40px;font-size:12px;">No sessions</div>'}
+          </div>
+        </div>`;
+      }).join('');
+    } catch {}
+  }
+
+  sidebarContent.addEventListener('click', e => {
+    // Toggle project expand/collapse
+    const toggle = e.target.closest('[data-sb-toggle]');
+    if (toggle) {
+      const projectId = toggle.dataset.sbToggle;
+      const sessions = sidebarContent.querySelector(`[data-sb-project="${projectId}"]`);
+      const chevron = toggle.querySelector('.chevron');
+      const isExpanded = sessions.classList.toggle('expanded');
+      chevron.classList.toggle('expanded', isExpanded);
+      sidebarExpanded[projectId] = isExpanded;
+      return;
+    }
+
+    // Switch to session
+    const sessionEl = e.target.closest('[data-sb-tmux]');
+    if (sessionEl) {
+      const tmuxName = sessionEl.dataset.sbTmux;
+      const sessionName = sessionEl.dataset.sbName;
+      const projectId = sessionEl.dataset.sbProjectId;
+      const projectName = sessionEl.dataset.sbProjectName;
+
+      currentProject = { id: projectId, name: projectName };
+      currentSessionName = sessionName;
+      closeSidebar();
+      connectToSession(tmuxName);
+    }
+  });
 
   // --- Setup ---
   const setupPassword = document.getElementById('setup-password');
@@ -352,22 +559,16 @@
 
   // --- Change Password ---
   const passwordModal = document.getElementById('password-modal');
-  const cpCurrent = document.getElementById('cp-current');
-  const cpNew = document.getElementById('cp-new');
-  const cpConfirm = document.getElementById('cp-confirm');
-  const cpError = document.getElementById('cp-error');
-  const cpSuccess = document.getElementById('cp-success');
 
-  document.getElementById('settings-btn').addEventListener('click', () => {
-    cpCurrent.value = ''; cpNew.value = ''; cpConfirm.value = '';
-    cpError.style.display = 'none'; cpSuccess.style.display = 'none';
-    passwordModal.classList.add('active');
-    setTimeout(() => cpCurrent.focus(), 100);
-  });
   document.getElementById('cp-cancel').addEventListener('click', () => passwordModal.classList.remove('active'));
   passwordModal.addEventListener('click', e => { if (e.target === passwordModal) passwordModal.classList.remove('active'); });
 
   document.getElementById('cp-save').addEventListener('click', async () => {
+    const cpError = document.getElementById('cp-error');
+    const cpSuccess = document.getElementById('cp-success');
+    const cpNew = document.getElementById('cp-new');
+    const cpConfirm = document.getElementById('cp-confirm');
+    const cpCurrent = document.getElementById('cp-current');
     cpError.style.display = 'none';
     cpSuccess.style.display = 'none';
     if (cpNew.value.length < 6) {
@@ -400,7 +601,7 @@
       cpError.style.display = 'block';
     }
   });
-  cpConfirm.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cp-save').click(); });
+  document.getElementById('cp-confirm').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cp-save').click(); });
 
   // --- Projects ---
   const projectsList = document.getElementById('projects-list');
@@ -553,6 +754,7 @@
   const terminalContainer = document.getElementById('terminal-container');
 
   function connectToSession(tmuxName) {
+    currentTmuxName = tmuxName;
     terminalTitle.innerHTML = `<span class="breadcrumb-project">${currentProject.name}</span> / ${currentSessionName}`;
     showView('terminal');
 
@@ -631,6 +833,7 @@
     if (currentTerm) { currentTerm.dispose(); currentTerm = null; }
     terminalContainer.innerHTML = '';
     currentSessionName = null;
+    currentTmuxName = null;
     showView('sessions');
   });
 
