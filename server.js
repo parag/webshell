@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const bcrypt = require('bcryptjs');
 
 const HOME_DIR = os.homedir();
 const DATA_DIR = path.join(__dirname, 'data');
@@ -21,6 +22,10 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -35,11 +40,23 @@ db.exec(`
   );
 `);
 
+function getPasswordHash() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'password_hash'").get();
+  return row ? row.value : null;
+}
+
+function setPasswordHash(hash) {
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('password_hash', ?)").run(hash);
+}
+
+function isSetupDone() {
+  return getPasswordHash() !== null;
+}
+
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
-const PASSWORD = process.env.TERM_PASSWORD || 'changeme';
 const PORT = process.env.PORT || 3000;
 const tokens = new Set();
 
@@ -48,19 +65,33 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Auth ---
 
-function timingSafeEqual(a, b) {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) {
-    crypto.timingSafeEqual(bufA, bufA);
-    return false;
+// Check if first-time setup is needed
+app.get('/api/setup-status', (req, res) => {
+  res.json({ setup_done: isSetupDone() });
+});
+
+// First-time password setup
+app.post('/api/setup', (req, res) => {
+  if (isSetupDone()) {
+    return res.status(403).json({ error: 'Password already set.' });
   }
-  return crypto.timingSafeEqual(bufA, bufB);
-}
+  const { password } = req.body || {};
+  if (!password || typeof password !== 'string' || password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+  const hash = bcrypt.hashSync(password, 12);
+  setPasswordHash(hash);
+  const token = crypto.randomBytes(32).toString('hex');
+  tokens.add(token);
+  res.json({ token });
+});
 
 app.post('/api/login', (req, res) => {
+  if (!isSetupDone()) {
+    return res.status(403).json({ error: 'Setup not complete.' });
+  }
   const { password } = req.body || {};
-  if (typeof password === 'string' && timingSafeEqual(password, PASSWORD)) {
+  if (typeof password === 'string' && bcrypt.compareSync(password, getPasswordHash())) {
     const token = crypto.randomBytes(32).toString('hex');
     tokens.add(token);
     res.json({ token });
@@ -80,6 +111,27 @@ function authMiddleware(req, res, next) {
   if (token && tokens.has(token)) return next();
   res.status(401).json({ error: 'Unauthorized' });
 }
+
+// Change password (requires auth)
+app.post('/api/change-password', authMiddleware, (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'Both current and new password required.' });
+  }
+  if (typeof new_password !== 'string' || new_password.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters.' });
+  }
+  if (!bcrypt.compareSync(current_password, getPasswordHash())) {
+    return res.status(401).json({ error: 'Current password is wrong.' });
+  }
+  const hash = bcrypt.hashSync(new_password, 12);
+  setPasswordHash(hash);
+  // Invalidate all tokens except the current one
+  const currentToken = req.headers.authorization?.replace('Bearer ', '');
+  tokens.clear();
+  tokens.add(currentToken);
+  res.json({ ok: true });
+});
 
 // --- Validation ---
 

@@ -12,19 +12,19 @@
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 
-  /* --- Login View --- */
-  #login-view {
+  /* --- Setup & Login View --- */
+  .auth-view {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     height: 100%; padding: 24px;
   }
-  #login-view h1 { font-size: 24px; margin-bottom: 8px; font-weight: 600; }
-  #login-view p { color: #8b949e; margin-bottom: 32px; font-size: 14px; }
-  #login-view input {
+  .auth-view h1 { font-size: 24px; margin-bottom: 8px; font-weight: 600; }
+  .auth-view p { color: #8b949e; margin-bottom: 32px; font-size: 14px; }
+  .auth-view input {
     width: 100%; max-width: 320px; padding: 14px 16px; font-size: 16px;
     background: #161b22; border: 1px solid #30363d; border-radius: 8px;
     color: #e6edf3; outline: none; margin-bottom: 16px;
   }
-  #login-view input:focus { border-color: #58a6ff; }
+  .auth-view input:focus { border-color: #58a6ff; }
   .btn {
     padding: 14px 24px; font-size: 16px; font-weight: 600; border: none;
     border-radius: 8px; cursor: pointer; transition: background 0.15s;
@@ -33,7 +33,8 @@
   .btn-primary { background: #238636; color: #fff; width: 100%; max-width: 320px; }
   .btn-primary:hover { background: #2ea043; }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-  .login-error { color: #f85149; font-size: 14px; margin-top: 12px; display: none; }
+  .auth-error { color: #f85149; font-size: 14px; margin-top: 12px; display: none; }
+  .auth-hint { color: #8b949e; font-size: 12px; margin-top: -8px; margin-bottom: 16px; width: 100%; max-width: 320px; }
 
   /* --- Shared list styles --- */
   .view-header {
@@ -42,12 +43,20 @@
   }
   .view-header h1 { font-size: 20px; font-weight: 600; }
   .view-header-left { display: flex; align-items: center; gap: 8px; }
+  .view-header-right { display: flex; align-items: center; gap: 8px; }
   .btn-new {
     background: #238636; color: #fff; padding: 10px 18px; font-size: 14px;
     font-weight: 600; border: none; border-radius: 8px; cursor: pointer;
     min-height: 44px; touch-action: manipulation;
   }
   .btn-new:hover { background: #2ea043; }
+  .btn-icon {
+    background: none; border: none; color: #8b949e; font-size: 20px;
+    cursor: pointer; padding: 8px; min-width: 44px; min-height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation; border-radius: 8px;
+  }
+  .btn-icon:hover { color: #e6edf3; background: #21262d; }
   .item-list { flex: 1; overflow-y: auto; padding: 12px 16px; -webkit-overflow-scrolling: touch; }
   .card {
     display: flex; align-items: center;
@@ -131,30 +140,46 @@
   .modal-actions .btn { flex: 1; }
   .btn-secondary { background: #21262d; color: #e6edf3; }
   .btn-secondary:hover { background: #30363d; }
+  .modal-error { color: #f85149; font-size: 13px; margin-top: -8px; margin-bottom: 12px; display: none; }
+  .modal-success { color: #3fb950; font-size: 13px; margin-top: -8px; margin-bottom: 12px; display: none; }
 </style>
 </head>
 <body>
 
+<!-- Setup (first visit) -->
+<div id="setup-view" class="auth-view" style="display:none">
+  <h1>Welcome to webshell</h1>
+  <p>Set a password to secure your terminal</p>
+  <input type="password" id="setup-password" placeholder="Choose a password" autocomplete="new-password">
+  <div class="auth-hint">Minimum 6 characters</div>
+  <input type="password" id="setup-confirm" placeholder="Confirm password" autocomplete="new-password">
+  <button class="btn btn-primary" id="setup-btn">Set Password</button>
+  <div class="auth-error" id="setup-error"></div>
+</div>
+
 <!-- Login -->
-<div id="login-view">
+<div id="login-view" class="auth-view" style="display:none">
   <h1>Terminal</h1>
   <p>Enter password to connect</p>
   <input type="password" id="password-input" placeholder="Password" autocomplete="current-password">
   <button class="btn btn-primary" id="login-btn">Sign In</button>
-  <div class="login-error" id="login-error">Wrong password</div>
+  <div class="auth-error" id="login-error">Wrong password</div>
 </div>
 
 <!-- Projects -->
-<div id="projects-view">
+<div id="projects-view" style="display:none">
   <div class="view-header">
     <h1>Projects</h1>
-    <button class="btn-new" id="new-project-btn">+ New</button>
+    <div class="view-header-right">
+      <button class="btn-new" id="new-project-btn">+ New</button>
+      <button class="btn-icon" id="settings-btn" title="Settings">&#9881;</button>
+    </div>
   </div>
   <div class="item-list" id="projects-list"></div>
 </div>
 
 <!-- Sessions -->
-<div id="sessions-view">
+<div id="sessions-view" style="display:none">
   <div class="view-header">
     <div class="view-header-left">
       <button class="btn-back" id="sessions-back-btn">&larr;</button>
@@ -166,7 +191,7 @@
 </div>
 
 <!-- Terminal -->
-<div id="terminal-view">
+<div id="terminal-view" style="display:none">
   <div class="terminal-header">
     <button class="btn-back" id="terminal-back-btn">&larr;</button>
     <span class="terminal-title" id="terminal-title"></span>
@@ -199,6 +224,22 @@
   </div>
 </div>
 
+<!-- Change Password Modal -->
+<div class="modal-overlay" id="password-modal">
+  <div class="modal">
+    <h2>Change Password</h2>
+    <input type="password" id="cp-current" placeholder="Current password" autocomplete="current-password">
+    <input type="password" id="cp-new" placeholder="New password" autocomplete="new-password">
+    <input type="password" id="cp-confirm" placeholder="Confirm new password" autocomplete="new-password">
+    <div class="modal-error" id="cp-error"></div>
+    <div class="modal-success" id="cp-success"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="cp-cancel">Cancel</button>
+      <button class="btn btn-primary" id="cp-save" style="max-width:none">Save</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
@@ -208,7 +249,7 @@
   let currentWs = null;
   let currentTerm = null;
   let fitAddon = null;
-  let currentProject = null; // { id, name }
+  let currentProject = null;
   let currentSessionName = null;
 
   // --- API ---
@@ -217,20 +258,69 @@
     if (token) opts.headers['Authorization'] = `Bearer ${token}`;
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(path, opts);
-    if (res.status === 401) { sessionStorage.removeItem('token'); token = null; showView('login'); throw new Error('Unauthorized'); }
+    if (res.status === 401 && path !== '/api/login') {
+      sessionStorage.removeItem('token'); token = null; showView('login'); throw new Error('Unauthorized');
+    }
+    return res;
+  }
+
+  async function apiJson(method, path, body) {
+    const res = await api(method, path, body);
     return res.json();
   }
 
   // --- Views ---
-  const views = ['login', 'projects', 'sessions', 'terminal'];
+  const allViews = ['setup', 'login', 'projects', 'sessions', 'terminal'];
   function showView(name) {
-    views.forEach(v => {
+    allViews.forEach(v => {
       document.getElementById(v + '-view').style.display = 'none';
     });
-    document.getElementById(name + '-view').style.display = 'flex';
+    const el = document.getElementById(name + '-view');
+    el.style.display = (name === 'setup' || name === 'login') ? 'flex' : (name === 'projects' || name === 'sessions' || name === 'terminal') ? 'flex' : 'none';
     if (name === 'projects') loadProjects();
     if (name === 'sessions') loadSessions();
   }
+
+  // --- Setup ---
+  const setupPassword = document.getElementById('setup-password');
+  const setupConfirm = document.getElementById('setup-confirm');
+  const setupBtn = document.getElementById('setup-btn');
+  const setupError = document.getElementById('setup-error');
+
+  setupBtn.addEventListener('click', async () => {
+    setupError.style.display = 'none';
+    const pw = setupPassword.value;
+    const confirm = setupConfirm.value;
+    if (pw.length < 6) {
+      setupError.textContent = 'Password must be at least 6 characters.';
+      setupError.style.display = 'block';
+      return;
+    }
+    if (pw !== confirm) {
+      setupError.textContent = 'Passwords do not match.';
+      setupError.style.display = 'block';
+      return;
+    }
+    setupBtn.disabled = true;
+    try {
+      const res = await api('POST', '/api/setup', { password: pw });
+      const data = await res.json();
+      if (!res.ok) {
+        setupError.textContent = data.error;
+        setupError.style.display = 'block';
+        return;
+      }
+      token = data.token;
+      sessionStorage.setItem('token', token);
+      showView('projects');
+    } catch {
+      setupError.textContent = 'Something went wrong.';
+      setupError.style.display = 'block';
+    } finally {
+      setupBtn.disabled = false;
+    }
+  });
+  setupConfirm.addEventListener('keydown', e => { if (e.key === 'Enter') setupBtn.click(); });
 
   // --- Login ---
   const passwordInput = document.getElementById('password-input');
@@ -241,7 +331,12 @@
     loginBtn.disabled = true;
     loginError.style.display = 'none';
     try {
-      const data = await api('POST', '/api/login', { password: passwordInput.value });
+      const res = await api('POST', '/api/login', { password: passwordInput.value });
+      const data = await res.json();
+      if (!res.ok) {
+        loginError.style.display = 'block';
+        return;
+      }
       token = data.token;
       sessionStorage.setItem('token', token);
       passwordInput.value = '';
@@ -255,12 +350,64 @@
   loginBtn.addEventListener('click', login);
   passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 
+  // --- Change Password ---
+  const passwordModal = document.getElementById('password-modal');
+  const cpCurrent = document.getElementById('cp-current');
+  const cpNew = document.getElementById('cp-new');
+  const cpConfirm = document.getElementById('cp-confirm');
+  const cpError = document.getElementById('cp-error');
+  const cpSuccess = document.getElementById('cp-success');
+
+  document.getElementById('settings-btn').addEventListener('click', () => {
+    cpCurrent.value = ''; cpNew.value = ''; cpConfirm.value = '';
+    cpError.style.display = 'none'; cpSuccess.style.display = 'none';
+    passwordModal.classList.add('active');
+    setTimeout(() => cpCurrent.focus(), 100);
+  });
+  document.getElementById('cp-cancel').addEventListener('click', () => passwordModal.classList.remove('active'));
+  passwordModal.addEventListener('click', e => { if (e.target === passwordModal) passwordModal.classList.remove('active'); });
+
+  document.getElementById('cp-save').addEventListener('click', async () => {
+    cpError.style.display = 'none';
+    cpSuccess.style.display = 'none';
+    if (cpNew.value.length < 6) {
+      cpError.textContent = 'New password must be at least 6 characters.';
+      cpError.style.display = 'block';
+      return;
+    }
+    if (cpNew.value !== cpConfirm.value) {
+      cpError.textContent = 'New passwords do not match.';
+      cpError.style.display = 'block';
+      return;
+    }
+    try {
+      const res = await api('POST', '/api/change-password', {
+        current_password: cpCurrent.value,
+        new_password: cpNew.value,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        cpError.textContent = data.error;
+        cpError.style.display = 'block';
+        return;
+      }
+      cpSuccess.textContent = 'Password changed.';
+      cpSuccess.style.display = 'block';
+      cpCurrent.value = ''; cpNew.value = ''; cpConfirm.value = '';
+      setTimeout(() => passwordModal.classList.remove('active'), 1200);
+    } catch {
+      cpError.textContent = 'Something went wrong.';
+      cpError.style.display = 'block';
+    }
+  });
+  cpConfirm.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cp-save').click(); });
+
   // --- Projects ---
   const projectsList = document.getElementById('projects-list');
 
   async function loadProjects() {
     try {
-      const projects = await api('GET', '/api/projects');
+      const projects = await apiJson('GET', '/api/projects');
       if (projects.length === 0) {
         projectsList.innerHTML = '<div class="list-empty"><span>&#9776;</span>No projects yet.<br>Tap "+ New" to create one.</div>';
         return;
@@ -290,7 +437,7 @@
         ? `Delete this project and terminate ${count} session${count > 1 ? 's' : ''}?`
         : 'Delete this empty project?';
       if (confirm(msg)) {
-        try { await api('DELETE', `/api/projects/${id}`); } catch {}
+        try { await apiJson('DELETE', `/api/projects/${id}`); } catch {}
         loadProjects();
       }
       return;
@@ -318,7 +465,7 @@
     const name = projectNameInput.value.trim();
     if (!name) return;
     try {
-      await api('POST', '/api/projects', { name });
+      await apiJson('POST', '/api/projects', { name });
       projectModal.classList.remove('active');
       loadProjects();
     } catch {}
@@ -336,7 +483,7 @@
   async function loadSessions() {
     if (!currentProject) return;
     try {
-      const sessions = await api('GET', `/api/projects/${currentProject.id}/sessions`);
+      const sessions = await apiJson('GET', `/api/projects/${currentProject.id}/sessions`);
       if (sessions.length === 0) {
         sessionsList.innerHTML = '<div class="list-empty"><span>&#9002;</span>No sessions yet.<br>Tap "+ New" to create one.</div>';
         return;
@@ -365,7 +512,7 @@
       e.stopPropagation();
       const id = deleteBtn.dataset.deleteSession;
       if (confirm('Delete this session?')) {
-        try { await api('DELETE', `/api/sessions/${id}`); } catch {}
+        try { await apiJson('DELETE', `/api/sessions/${id}`); } catch {}
         loadSessions();
       }
       return;
@@ -392,7 +539,7 @@
     const name = sessionNameInput.value.trim();
     if (!currentProject) return;
     try {
-      const data = await api('POST', `/api/projects/${currentProject.id}/sessions`, name ? { name } : {});
+      const data = await apiJson('POST', `/api/projects/${currentProject.id}/sessions`, name ? { name } : {});
       sessionModal.classList.remove('active');
       currentSessionName = data.name;
       connectToSession(data.tmux_name);
@@ -479,7 +626,6 @@
     term.focus();
   }
 
-  // Terminal back button → sessions
   document.getElementById('terminal-back-btn').addEventListener('click', () => {
     if (currentWs) { currentWs.close(); currentWs = null; }
     if (currentTerm) { currentTerm.dispose(); currentTerm = null; }
@@ -488,7 +634,6 @@
     showView('sessions');
   });
 
-  // Browser back
   window.addEventListener('popstate', () => {
     if (document.getElementById('terminal-view').style.display === 'flex') {
       document.getElementById('terminal-back-btn').click();
@@ -498,11 +643,26 @@
   });
 
   // --- Init ---
-  if (token) {
-    api('GET', '/api/projects').then(() => showView('projects')).catch(() => showView('login'));
-  } else {
-    showView('login');
+  async function init() {
+    try {
+      const res = await fetch('/api/setup-status');
+      const { setup_done } = await res.json();
+      if (!setup_done) {
+        showView('setup');
+        return;
+      }
+      if (token) {
+        const check = await fetch('/api/projects', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (check.ok) { showView('projects'); return; }
+      }
+      sessionStorage.removeItem('token');
+      token = null;
+      showView('login');
+    } catch {
+      showView('login');
+    }
   }
+  init();
 })();
 </script>
 </body>

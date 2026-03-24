@@ -4,16 +4,19 @@ A mobile-first web terminal that connects to your server via the browser. Powere
 
 ## Features
 
-- **Session management** — create, resume, and delete terminal sessions from a clean UI
+- **Project organization** — group terminal sessions into projects; delete a project to terminate all its sessions
 - **Persistent sessions** — powered by tmux; close the browser, come back later, pick up where you left off
+- **First-visit setup** — no config files needed; set your password on first visit
+- **Change password** — update your password anytime from the settings gear icon
 - **Mobile-optimized** — full-screen terminal with touch support, virtual keyboard handling
-- **Secure** — HTTPS via Let's Encrypt, password auth, no unnecessary open ports
+- **Secure** — HTTPS via Let's Encrypt, bcrypt-hashed password, no unnecessary open ports
 - **Autosuggestions** — zsh + oh-my-zsh + zsh-autosuggestions out of the box
 
 ## Stack
 
 - **Backend:** Node.js + Express + WebSocket + node-pty
 - **Frontend:** xterm.js (CDN, no build step), vanilla JS SPA
+- **Storage:** SQLite (better-sqlite3) for projects, sessions, and settings
 - **Terminal:** tmux sessions with zsh
 - **Proxy:** nginx + Let's Encrypt SSL
 
@@ -47,50 +50,56 @@ After setup, run certbot for HTTPS:
 sudo certbot --nginx -d YOUR_DOMAIN
 ```
 
-The script generates a random password and saves it to `.env`. It prints the password at the end — save it somewhere safe.
+Then visit your domain — you'll see a **"Set your password"** screen on first visit.
 
 ### Manual setup (without setup.sh)
 
 Create a `.env` file in the project root:
 
 ```bash
-TERM_PASSWORD=your-secure-password-here
 PORT=3000
 ```
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TERM_PASSWORD` | Yes | Password for the web login |
 | `PORT` | No | Server port (default: 3000) |
 
 Then install dependencies and start:
 
 ```bash
 npm install
-source .env && node server.js
+node server.js
 ```
+
+Visit `http://localhost:3000` — the first-visit setup screen will prompt you to choose a password. The password is bcrypt-hashed and stored in `data/webshell.db`.
 
 ## Usage
 
 1. Visit `https://YOUR_DOMAIN`
-2. Enter your password
-3. Tap **+ New** to create a terminal session
-4. Tap any session to resume it
-5. Tap **←** to detach (session stays alive)
+2. **First visit:** choose a password. **Returning:** sign in.
+3. Create a **project** to organize your sessions
+4. Open a project, tap **+ New** to create a terminal session
+5. Tap any session to resume it
+6. Tap **←** to detach (session stays alive)
+7. Tap the **gear icon** on the projects page to change your password
 
 ## Architecture
 
 ```
 Browser → nginx (HTTPS) → Node.js (:3000) → node-pty → tmux sessions
+                                ↓
+                          SQLite (data/webshell.db)
 ```
 
 ## Security
 
 - HTTPS via Let's Encrypt (auto-renewing)
-- App-level password authentication with token-based sessions
+- Password hashed with bcrypt (cost factor 12)
+- First-visit setup — no default password, no password in config files
+- Token-based session auth on all API + WebSocket endpoints
+- Password change invalidates all other sessions
 - nginx reverse proxy — only ports 80/443 exposed
 - Session name sanitization to prevent command injection
-- Timing-safe password comparison
 
 ## License
 
