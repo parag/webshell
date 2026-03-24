@@ -6,8 +6,34 @@ const crypto = require('crypto');
 const { execSync } = require('child_process');
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
+const Database = require('better-sqlite3');
 
 const HOME_DIR = os.homedir();
+const DATA_DIR = path.join(__dirname, 'data');
+
+// Ensure data directory exists
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// --- SQLite setup ---
+const db = new Database(path.join(DATA_DIR, 'webshell.db'));
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    tmux_name TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+`);
 
 const app = express();
 const server = http.createServer(app);
@@ -26,7 +52,6 @@ function timingSafeEqual(a, b) {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
   if (bufA.length !== bufB.length) {
-    // Compare against self to keep constant time, then return false
     crypto.timingSafeEqual(bufA, bufA);
     return false;
   }
@@ -56,59 +81,138 @@ function authMiddleware(req, res, next) {
   res.status(401).json({ error: 'Unauthorized' });
 }
 
-// --- Session name validation ---
+// --- Validation ---
 
 function isValidName(name) {
   return /^[a-zA-Z0-9_-]{1,50}$/.test(name);
 }
 
-// --- tmux session management ---
+// --- tmux helpers ---
 
-app.get('/api/sessions', authMiddleware, (req, res) => {
+function getTmuxSessions() {
   try {
     const output = execSync(
-      'tmux list-sessions -F "#{session_name}||#{session_windows}||#{session_created}||#{session_attached}"',
+      'tmux list-sessions -F "#{session_name}||#{session_attached}"',
       { encoding: 'utf8', timeout: 5000 }
     );
-    const sessions = output.trim().split('\n').filter(Boolean).map(line => {
-      const [name, windows, created, attached] = line.split('||');
-      return {
-        name,
-        windows: parseInt(windows, 10),
-        created: parseInt(created, 10) * 1000,
-        attached: parseInt(attached, 10) > 0,
-      };
+    const map = {};
+    output.trim().split('\n').filter(Boolean).forEach(line => {
+      const [name, attached] = line.split('||');
+      map[name] = { attached: parseInt(attached, 10) > 0 };
     });
-    res.json(sessions);
+    return map;
   } catch {
-    res.json([]);
+    return {};
+  }
+}
+
+function killTmuxSession(tmuxName) {
+  try {
+    execSync(`tmux kill-session -t '${tmuxName}'`, { timeout: 5000 });
+  } catch {
+    // session may already be dead
+  }
+}
+
+// --- Projects API ---
+
+app.get('/api/projects', authMiddleware, (req, res) => {
+  const projects = db.prepare(`
+    SELECT p.id, p.name, p.created_at,
+           COUNT(s.id) as session_count
+    FROM projects p
+    LEFT JOIN sessions s ON s.project_id = p.id
+    GROUP BY p.id
+    ORDER BY p.created_at DESC
+  `).all();
+  res.json(projects);
+});
+
+app.post('/api/projects', authMiddleware, (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !isValidName(name)) {
+    return res.status(400).json({ error: 'Invalid name. Use alphanumeric, dash, underscore only.' });
+  }
+  try {
+    const result = db.prepare('INSERT INTO projects (name) VALUES (?)').run(name);
+    res.json({ id: result.lastInsertRowid, name });
+  } catch {
+    res.status(400).json({ error: 'Project already exists.' });
   }
 });
 
-app.post('/api/sessions', authMiddleware, (req, res) => {
+app.delete('/api/projects/:id', authMiddleware, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid project id.' });
+
+  // Kill all tmux sessions for this project
+  const sessions = db.prepare('SELECT tmux_name FROM sessions WHERE project_id = ?').all(id);
+  for (const s of sessions) {
+    killTmuxSession(s.tmux_name);
+  }
+
+  const result = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Project not found.' });
+  res.json({ ok: true });
+});
+
+// --- Sessions API (project-scoped) ---
+
+app.get('/api/projects/:id/sessions', authMiddleware, (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project id.' });
+
+  const sessions = db.prepare(
+    'SELECT id, name, tmux_name, created_at FROM sessions WHERE project_id = ? ORDER BY created_at DESC'
+  ).all(projectId);
+
+  const tmux = getTmuxSessions();
+  const result = sessions.map(s => ({
+    ...s,
+    attached: tmux[s.tmux_name]?.attached || false,
+    alive: s.tmux_name in tmux,
+  }));
+  res.json(result);
+});
+
+app.post('/api/projects/:id/sessions', authMiddleware, (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project id.' });
+
+  const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
   const name = req.body.name || `s-${Date.now()}`;
   if (!isValidName(name)) {
     return res.status(400).json({ error: 'Invalid name. Use alphanumeric, dash, underscore only.' });
   }
+
+  const tmuxName = `${project.name}--${name}`;
+
   try {
-    execSync(`tmux new-session -d -s '${name}' -c '${HOME_DIR}'`, { timeout: 5000 });
-    res.json({ name });
+    const result = db.prepare(
+      'INSERT INTO sessions (project_id, name, tmux_name) VALUES (?, ?, ?)'
+    ).run(projectId, name, tmuxName);
+
+    execSync(`tmux new-session -d -s '${tmuxName}' -c '${HOME_DIR}'`, { timeout: 5000 });
+    res.json({ id: result.lastInsertRowid, name, tmux_name: tmuxName });
   } catch (e) {
+    // Clean up DB row if tmux failed
+    db.prepare('DELETE FROM sessions WHERE tmux_name = ?').run(tmuxName);
     res.status(400).json({ error: 'Session already exists or failed to create.' });
   }
 });
 
-app.delete('/api/sessions/:name', authMiddleware, (req, res) => {
-  const { name } = req.params;
-  if (!isValidName(name)) {
-    return res.status(400).json({ error: 'Invalid session name.' });
-  }
-  try {
-    execSync(`tmux kill-session -t '${name}'`, { timeout: 5000 });
-    res.json({ ok: true });
-  } catch {
-    res.status(400).json({ error: 'Session not found.' });
-  }
+app.delete('/api/sessions/:id', authMiddleware, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid session id.' });
+
+  const session = db.prepare('SELECT tmux_name FROM sessions WHERE id = ?').get(id);
+  if (!session) return res.status(404).json({ error: 'Session not found.' });
+
+  killTmuxSession(session.tmux_name);
+  db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  res.json({ ok: true });
 });
 
 // --- WebSocket terminal ---
@@ -135,26 +239,27 @@ server.on('upgrade', (req, socket, head) => {
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://localhost');
-  const session = url.searchParams.get('session');
+  const tmuxName = url.searchParams.get('session');
 
-  if (!session || !isValidName(session)) {
+  // Validate: tmux_name format is "project--session", allow double dash
+  if (!tmuxName || !/^[a-zA-Z0-9_-]{1,50}--[a-zA-Z0-9_-]{1,50}$/.test(tmuxName)) {
     ws.close(1008, 'Invalid session');
     return;
   }
 
-  // Ensure session exists
+  // Ensure tmux session exists
   try {
-    execSync(`tmux has-session -t '${session}'`, { timeout: 5000 });
+    execSync(`tmux has-session -t '${tmuxName}'`, { timeout: 5000 });
   } catch {
     try {
-      execSync(`tmux new-session -d -s '${session}'`, { timeout: 5000 });
+      execSync(`tmux new-session -d -s '${tmuxName}' -c '${HOME_DIR}'`, { timeout: 5000 });
     } catch {
       ws.close(1011, 'Failed to create session');
       return;
     }
   }
 
-  const term = pty.spawn('tmux', ['attach-session', '-t', session], {
+  const term = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,

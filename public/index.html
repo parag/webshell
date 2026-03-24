@@ -35,44 +35,56 @@
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
   .login-error { color: #f85149; font-size: 14px; margin-top: 12px; display: none; }
 
-  /* --- Sessions View --- */
-  #sessions-view { display: none; height: 100%; flex-direction: column; }
-  .sessions-header {
+  /* --- Shared list styles --- */
+  .view-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 16px 20px; border-bottom: 1px solid #21262d;
   }
-  .sessions-header h1 { font-size: 20px; font-weight: 600; }
+  .view-header h1 { font-size: 20px; font-weight: 600; }
+  .view-header-left { display: flex; align-items: center; gap: 8px; }
   .btn-new {
     background: #238636; color: #fff; padding: 10px 18px; font-size: 14px;
     font-weight: 600; border: none; border-radius: 8px; cursor: pointer;
     min-height: 44px; touch-action: manipulation;
   }
   .btn-new:hover { background: #2ea043; }
-  .sessions-list { flex: 1; overflow-y: auto; padding: 12px 16px; -webkit-overflow-scrolling: touch; }
-  .session-card {
-    display: flex; align-items: center; justify-content: space-between;
+  .item-list { flex: 1; overflow-y: auto; padding: 12px 16px; -webkit-overflow-scrolling: touch; }
+  .card {
+    display: flex; align-items: center;
     background: #161b22; border: 1px solid #21262d; border-radius: 10px;
     padding: 16px; margin-bottom: 10px; cursor: pointer;
     transition: border-color 0.15s; touch-action: manipulation;
   }
-  .session-card:hover { border-color: #58a6ff; }
-  .session-card:active { background: #1c2129; }
-  .session-info h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
-  .session-info p { font-size: 13px; color: #8b949e; }
-  .session-status { width: 8px; height: 8px; border-radius: 50%; margin-right: 10px; flex-shrink: 0; }
-  .session-status.attached { background: #3fb950; }
-  .session-status.detached { background: #8b949e; }
-  .session-delete {
+  .card:hover { border-color: #58a6ff; }
+  .card:active { background: #1c2129; }
+  .card-info { flex: 1; }
+  .card-info h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .card-info p { font-size: 13px; color: #8b949e; }
+  .card-delete {
     background: none; border: none; color: #8b949e; font-size: 20px;
     cursor: pointer; padding: 8px 12px; min-width: 44px; min-height: 44px;
     display: flex; align-items: center; justify-content: center;
-    touch-action: manipulation;
+    touch-action: manipulation; flex-shrink: 0;
   }
-  .session-delete:hover { color: #f85149; }
-  .sessions-empty {
+  .card-delete:hover { color: #f85149; }
+  .list-empty {
     text-align: center; color: #8b949e; padding: 60px 20px; font-size: 15px;
   }
-  .sessions-empty span { font-size: 40px; display: block; margin-bottom: 16px; opacity: 0.5; }
+  .list-empty span { font-size: 40px; display: block; margin-bottom: 16px; opacity: 0.5; }
+  .session-status { width: 8px; height: 8px; border-radius: 50%; margin-right: 12px; flex-shrink: 0; }
+  .session-status.attached { background: #3fb950; }
+  .session-status.detached { background: #8b949e; }
+  .session-status.dead { background: #f85149; }
+
+  /* --- Projects View --- */
+  #projects-view { display: none; height: 100%; flex-direction: column; }
+  .project-badge {
+    font-size: 12px; color: #8b949e; background: #21262d; padding: 2px 8px;
+    border-radius: 10px; margin-left: 8px;
+  }
+
+  /* --- Sessions View --- */
+  #sessions-view { display: none; height: 100%; flex-direction: column; }
 
   /* --- Terminal View --- */
   #terminal-view { display: none; height: 100%; flex-direction: column; }
@@ -88,15 +100,16 @@
   }
   .btn-back:hover { color: #e6edf3; }
   .terminal-title { font-size: 14px; color: #8b949e; margin-left: 8px; font-weight: 500; }
+  .terminal-title .breadcrumb-project { color: #58a6ff; }
   .connection-status {
     margin-left: auto; font-size: 12px; padding: 4px 10px; border-radius: 12px;
-    font-weight: 500;
+    font-weight: 500; flex-shrink: 0;
   }
   .connection-status.connected { color: #3fb950; background: rgba(63,185,80,0.1); }
   .connection-status.disconnected { color: #f85149; background: rgba(248,81,73,0.1); }
   #terminal-container { flex: 1; overflow: hidden; }
 
-  /* --- New Session Modal --- */
+  /* --- Modal --- */
   .modal-overlay {
     display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
     z-index: 100; align-items: flex-end; justify-content: center;
@@ -118,17 +131,6 @@
   .modal-actions .btn { flex: 1; }
   .btn-secondary { background: #21262d; color: #e6edf3; }
   .btn-secondary:hover { background: #30363d; }
-
-  /* Delete confirmation */
-  .confirm-bar {
-    display: none; background: #f8514926; border: 1px solid #f85149;
-    border-radius: 8px; padding: 12px 16px; margin-bottom: 10px;
-    align-items: center; justify-content: space-between;
-  }
-  .confirm-bar.active { display: flex; }
-  .confirm-bar p { font-size: 14px; color: #f85149; }
-  .btn-danger { background: #da3633; color: #fff; padding: 8px 16px; font-size: 14px; border-radius: 6px; }
-  .btn-danger:hover { background: #f85149; }
 </style>
 </head>
 <body>
@@ -142,33 +144,57 @@
   <div class="login-error" id="login-error">Wrong password</div>
 </div>
 
+<!-- Projects -->
+<div id="projects-view">
+  <div class="view-header">
+    <h1>Projects</h1>
+    <button class="btn-new" id="new-project-btn">+ New</button>
+  </div>
+  <div class="item-list" id="projects-list"></div>
+</div>
+
 <!-- Sessions -->
 <div id="sessions-view">
-  <div class="sessions-header">
-    <h1>Sessions</h1>
+  <div class="view-header">
+    <div class="view-header-left">
+      <button class="btn-back" id="sessions-back-btn">&larr;</button>
+      <h1 id="sessions-project-name"></h1>
+    </div>
     <button class="btn-new" id="new-session-btn">+ New</button>
   </div>
-  <div class="sessions-list" id="sessions-list"></div>
+  <div class="item-list" id="sessions-list"></div>
 </div>
 
 <!-- Terminal -->
 <div id="terminal-view">
   <div class="terminal-header">
-    <button class="btn-back" id="back-btn">&larr;</button>
+    <button class="btn-back" id="terminal-back-btn">&larr;</button>
     <span class="terminal-title" id="terminal-title"></span>
     <span class="connection-status connected" id="conn-status">Connected</span>
   </div>
   <div id="terminal-container"></div>
 </div>
 
+<!-- New Project Modal -->
+<div class="modal-overlay" id="project-modal">
+  <div class="modal">
+    <h2>New Project</h2>
+    <input type="text" id="project-name-input" placeholder="Project name" autocapitalize="off" autocorrect="off">
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="project-modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="project-modal-create" style="max-width:none">Create</button>
+    </div>
+  </div>
+</div>
+
 <!-- New Session Modal -->
-<div class="modal-overlay" id="new-modal">
+<div class="modal-overlay" id="session-modal">
   <div class="modal">
     <h2>New Session</h2>
     <input type="text" id="session-name-input" placeholder="Session name (optional)" autocapitalize="off" autocorrect="off">
     <div class="modal-actions">
-      <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
-      <button class="btn btn-primary" id="modal-create" style="max-width:none">Create</button>
+      <button class="btn btn-secondary" id="session-modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="session-modal-create" style="max-width:none">Create</button>
     </div>
   </div>
 </div>
@@ -178,42 +204,14 @@
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
 <script>
 (function() {
-  // State
   let token = sessionStorage.getItem('token');
   let currentWs = null;
   let currentTerm = null;
   let fitAddon = null;
-  let currentSession = null;
+  let currentProject = null; // { id, name }
+  let currentSessionName = null;
 
-  // Elements
-  const loginView = document.getElementById('login-view');
-  const sessionsView = document.getElementById('sessions-view');
-  const terminalView = document.getElementById('terminal-view');
-  const passwordInput = document.getElementById('password-input');
-  const loginBtn = document.getElementById('login-btn');
-  const loginError = document.getElementById('login-error');
-  const sessionsList = document.getElementById('sessions-list');
-  const newSessionBtn = document.getElementById('new-session-btn');
-  const backBtn = document.getElementById('back-btn');
-  const terminalTitle = document.getElementById('terminal-title');
-  const connStatus = document.getElementById('conn-status');
-  const terminalContainer = document.getElementById('terminal-container');
-  const newModal = document.getElementById('new-modal');
-  const sessionNameInput = document.getElementById('session-name-input');
-  const modalCancel = document.getElementById('modal-cancel');
-  const modalCreate = document.getElementById('modal-create');
-
-  // --- View management ---
-  function showView(view) {
-    loginView.style.display = 'none';
-    sessionsView.style.display = 'none';
-    terminalView.style.display = 'none';
-    if (view === 'login') loginView.style.display = 'flex';
-    else if (view === 'sessions') { sessionsView.style.display = 'flex'; loadSessions(); }
-    else if (view === 'terminal') terminalView.style.display = 'flex';
-  }
-
-  // --- API helpers ---
+  // --- API ---
   async function api(method, path, body) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
     if (token) opts.headers['Authorization'] = `Bearer ${token}`;
@@ -223,7 +221,22 @@
     return res.json();
   }
 
+  // --- Views ---
+  const views = ['login', 'projects', 'sessions', 'terminal'];
+  function showView(name) {
+    views.forEach(v => {
+      document.getElementById(v + '-view').style.display = 'none';
+    });
+    document.getElementById(name + '-view').style.display = 'flex';
+    if (name === 'projects') loadProjects();
+    if (name === 'sessions') loadSessions();
+  }
+
   // --- Login ---
+  const passwordInput = document.getElementById('password-input');
+  const loginBtn = document.getElementById('login-btn');
+  const loginError = document.getElementById('login-error');
+
   async function login() {
     loginBtn.disabled = true;
     loginError.style.display = 'none';
@@ -232,89 +245,174 @@
       token = data.token;
       sessionStorage.setItem('token', token);
       passwordInput.value = '';
-      showView('sessions');
+      showView('projects');
     } catch {
       loginError.style.display = 'block';
     } finally {
       loginBtn.disabled = false;
     }
   }
-
   loginBtn.addEventListener('click', login);
-  passwordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
+  passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 
-  // --- Sessions ---
-  let deleteTarget = null;
+  // --- Projects ---
+  const projectsList = document.getElementById('projects-list');
 
-  async function loadSessions() {
+  async function loadProjects() {
     try {
-      const sessions = await api('GET', '/api/sessions');
-      if (sessions.length === 0) {
-        sessionsList.innerHTML = '<div class="sessions-empty"><span>&#9002;</span>No sessions yet.<br>Tap "+ New" to create one.</div>';
+      const projects = await api('GET', '/api/projects');
+      if (projects.length === 0) {
+        projectsList.innerHTML = '<div class="list-empty"><span>&#9776;</span>No projects yet.<br>Tap "+ New" to create one.</div>';
         return;
       }
-      sessionsList.innerHTML = sessions.map(s => {
-        const date = new Date(s.created);
-        const timeStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      projectsList.innerHTML = projects.map(p => {
+        const date = new Date(p.created_at * 1000);
+        const timeStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
         return `
-          <div class="session-card" data-name="${s.name}">
-            <div class="session-status ${s.attached ? 'attached' : 'detached'}"></div>
-            <div class="session-info" style="flex:1">
-              <h3>${s.name}</h3>
-              <p>${s.windows} window${s.windows !== 1 ? 's' : ''} &middot; ${timeStr}</p>
+          <div class="card" data-project-id="${p.id}" data-project-name="${p.name}">
+            <div class="card-info">
+              <h3>${p.name}<span class="project-badge">${p.session_count} session${p.session_count !== 1 ? 's' : ''}</span></h3>
+              <p>Created ${timeStr}</p>
             </div>
-            <button class="session-delete" data-delete="${s.name}" title="Delete">&times;</button>
+            <button class="card-delete" data-delete-project="${p.id}" data-sessions="${p.session_count}" title="Delete">&times;</button>
           </div>`;
       }).join('');
     } catch {}
   }
 
-  sessionsList.addEventListener('click', async (e) => {
-    const deleteBtn = e.target.closest('[data-delete]');
+  projectsList.addEventListener('click', async e => {
+    const deleteBtn = e.target.closest('[data-delete-project]');
     if (deleteBtn) {
       e.stopPropagation();
-      const name = deleteBtn.dataset.delete;
-      if (confirm(`Delete session "${name}"?`)) {
-        try { await api('DELETE', `/api/sessions/${name}`); } catch {}
+      const id = deleteBtn.dataset.deleteProject;
+      const count = deleteBtn.dataset.sessions;
+      const msg = count > 0
+        ? `Delete this project and terminate ${count} session${count > 1 ? 's' : ''}?`
+        : 'Delete this empty project?';
+      if (confirm(msg)) {
+        try { await api('DELETE', `/api/projects/${id}`); } catch {}
+        loadProjects();
+      }
+      return;
+    }
+    const card = e.target.closest('.card[data-project-id]');
+    if (card) {
+      currentProject = { id: card.dataset.projectId, name: card.dataset.projectName };
+      document.getElementById('sessions-project-name').textContent = currentProject.name;
+      showView('sessions');
+    }
+  });
+
+  // New project modal
+  const projectModal = document.getElementById('project-modal');
+  const projectNameInput = document.getElementById('project-name-input');
+  document.getElementById('new-project-btn').addEventListener('click', () => {
+    projectNameInput.value = '';
+    projectModal.classList.add('active');
+    setTimeout(() => projectNameInput.focus(), 100);
+  });
+  document.getElementById('project-modal-cancel').addEventListener('click', () => projectModal.classList.remove('active'));
+  projectModal.addEventListener('click', e => { if (e.target === projectModal) projectModal.classList.remove('active'); });
+
+  document.getElementById('project-modal-create').addEventListener('click', async () => {
+    const name = projectNameInput.value.trim();
+    if (!name) return;
+    try {
+      await api('POST', '/api/projects', { name });
+      projectModal.classList.remove('active');
+      loadProjects();
+    } catch {}
+  });
+  projectNameInput.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('project-modal-create').click(); });
+
+  // --- Sessions ---
+  const sessionsList = document.getElementById('sessions-list');
+
+  document.getElementById('sessions-back-btn').addEventListener('click', () => {
+    currentProject = null;
+    showView('projects');
+  });
+
+  async function loadSessions() {
+    if (!currentProject) return;
+    try {
+      const sessions = await api('GET', `/api/projects/${currentProject.id}/sessions`);
+      if (sessions.length === 0) {
+        sessionsList.innerHTML = '<div class="list-empty"><span>&#9002;</span>No sessions yet.<br>Tap "+ New" to create one.</div>';
+        return;
+      }
+      sessionsList.innerHTML = sessions.map(s => {
+        const date = new Date(s.created_at * 1000);
+        const timeStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        const statusClass = !s.alive ? 'dead' : s.attached ? 'attached' : 'detached';
+        const statusText = !s.alive ? 'dead' : s.attached ? 'attached' : 'detached';
+        return `
+          <div class="card" data-tmux="${s.tmux_name}" data-session-name="${s.name}">
+            <div class="session-status ${statusClass}"></div>
+            <div class="card-info">
+              <h3>${s.name}</h3>
+              <p>${statusText} &middot; ${timeStr}</p>
+            </div>
+            <button class="card-delete" data-delete-session="${s.id}" title="Delete">&times;</button>
+          </div>`;
+      }).join('');
+    } catch {}
+  }
+
+  sessionsList.addEventListener('click', async e => {
+    const deleteBtn = e.target.closest('[data-delete-session]');
+    if (deleteBtn) {
+      e.stopPropagation();
+      const id = deleteBtn.dataset.deleteSession;
+      if (confirm('Delete this session?')) {
+        try { await api('DELETE', `/api/sessions/${id}`); } catch {}
         loadSessions();
       }
       return;
     }
-    const card = e.target.closest('.session-card');
-    if (card) connectToSession(card.dataset.name);
+    const card = e.target.closest('.card[data-tmux]');
+    if (card) {
+      currentSessionName = card.dataset.sessionName;
+      connectToSession(card.dataset.tmux);
+    }
   });
 
-  // --- New session modal ---
-  newSessionBtn.addEventListener('click', () => {
+  // New session modal
+  const sessionModal = document.getElementById('session-modal');
+  const sessionNameInput = document.getElementById('session-name-input');
+  document.getElementById('new-session-btn').addEventListener('click', () => {
     sessionNameInput.value = '';
-    newModal.classList.add('active');
+    sessionModal.classList.add('active');
     setTimeout(() => sessionNameInput.focus(), 100);
   });
-  modalCancel.addEventListener('click', () => newModal.classList.remove('active'));
-  newModal.addEventListener('click', (e) => { if (e.target === newModal) newModal.classList.remove('active'); });
+  document.getElementById('session-modal-cancel').addEventListener('click', () => sessionModal.classList.remove('active'));
+  sessionModal.addEventListener('click', e => { if (e.target === sessionModal) sessionModal.classList.remove('active'); });
 
-  modalCreate.addEventListener('click', async () => {
+  document.getElementById('session-modal-create').addEventListener('click', async () => {
     const name = sessionNameInput.value.trim();
+    if (!currentProject) return;
     try {
-      const data = await api('POST', '/api/sessions', name ? { name } : {});
-      newModal.classList.remove('active');
-      connectToSession(data.name);
+      const data = await api('POST', `/api/projects/${currentProject.id}/sessions`, name ? { name } : {});
+      sessionModal.classList.remove('active');
+      currentSessionName = data.name;
+      connectToSession(data.tmux_name);
     } catch {}
   });
-  sessionNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') modalCreate.click(); });
+  sessionNameInput.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('session-modal-create').click(); });
 
   // --- Terminal ---
-  function connectToSession(name) {
-    currentSession = name;
-    terminalTitle.textContent = name;
+  const terminalTitle = document.getElementById('terminal-title');
+  const connStatus = document.getElementById('conn-status');
+  const terminalContainer = document.getElementById('terminal-container');
+
+  function connectToSession(tmuxName) {
+    terminalTitle.innerHTML = `<span class="breadcrumb-project">${currentProject.name}</span> / ${currentSessionName}`;
     showView('terminal');
 
-    // Clean up previous
     if (currentWs) { currentWs.close(); currentWs = null; }
     if (currentTerm) { currentTerm.dispose(); currentTerm = null; }
     terminalContainer.innerHTML = '';
 
-    // Create terminal
     const term = new window.Terminal({
       cursorBlink: true,
       fontSize: 15,
@@ -338,24 +436,20 @@
     term.loadAddon(fitAddon);
     term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
     term.open(terminalContainer);
-
     setTimeout(() => { fitAddon.fit(); }, 50);
-
     currentTerm = term;
 
-    // WebSocket
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&session=${encodeURIComponent(name)}`);
+    const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&session=${encodeURIComponent(tmuxName)}`);
     currentWs = ws;
 
     ws.onopen = () => {
       connStatus.textContent = 'Connected';
       connStatus.className = 'connection-status connected';
-      // Send initial size
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
 
-    ws.onmessage = (event) => {
+    ws.onmessage = event => {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'output') term.write(msg.data);
@@ -372,48 +466,40 @@
       connStatus.className = 'connection-status disconnected';
     };
 
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }));
-      }
+    term.onData(data => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
     });
 
     term.onResize(({ cols, rows }) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     });
 
-    // Handle viewport resize (virtual keyboard, orientation change)
-    const resizeObserver = new ResizeObserver(() => {
-      if (fitAddon) fitAddon.fit();
-    });
+    const resizeObserver = new ResizeObserver(() => { if (fitAddon) fitAddon.fit(); });
     resizeObserver.observe(terminalContainer);
-
-    // Focus terminal for immediate typing
     term.focus();
   }
 
-  // --- Back button ---
-  backBtn.addEventListener('click', () => {
+  // Terminal back button → sessions
+  document.getElementById('terminal-back-btn').addEventListener('click', () => {
     if (currentWs) { currentWs.close(); currentWs = null; }
     if (currentTerm) { currentTerm.dispose(); currentTerm = null; }
     terminalContainer.innerHTML = '';
-    currentSession = null;
+    currentSessionName = null;
     showView('sessions');
   });
 
-  // --- Handle browser back ---
+  // Browser back
   window.addEventListener('popstate', () => {
-    if (terminalView.style.display === 'flex') {
-      backBtn.click();
+    if (document.getElementById('terminal-view').style.display === 'flex') {
+      document.getElementById('terminal-back-btn').click();
+    } else if (document.getElementById('sessions-view').style.display === 'flex') {
+      document.getElementById('sessions-back-btn').click();
     }
   });
 
   // --- Init ---
   if (token) {
-    // Validate token by trying to load sessions
-    api('GET', '/api/sessions').then(() => showView('sessions')).catch(() => showView('login'));
+    api('GET', '/api/projects').then(() => showView('projects')).catch(() => showView('login'));
   } else {
     showView('login');
   }
