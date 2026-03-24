@@ -101,6 +101,7 @@ User=$USER
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$APP_DIR/.env
 ExecStart=$(which node) server.js
+KillMode=process
 Restart=always
 RestartSec=5
 
