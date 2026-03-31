@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0d1117">
@@ -227,6 +227,69 @@
   .btn-secondary:hover { background: #30363d; }
   .modal-error { color: #f85149; font-size: 13px; margin-top: -8px; margin-bottom: 12px; display: none; }
   .modal-success { color: #3fb950; font-size: 13px; margin-top: -8px; margin-bottom: 12px; display: none; }
+
+  /* --- Files View --- */
+  #files-view { display: none; height: 100%; flex-direction: column; }
+  .files-breadcrumb {
+    display: flex; align-items: center; gap: 4px; padding: 8px 16px;
+    background: #0d1117; border-bottom: 1px solid #21262d; flex-shrink: 0;
+    overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch;
+    font-size: 13px; color: #8b949e;
+  }
+  .files-breadcrumb span { cursor: pointer; color: #58a6ff; flex-shrink: 0; }
+  .files-breadcrumb span:last-child { color: #e6edf3; cursor: default; }
+  .files-breadcrumb .bc-sep { color: #484f58; cursor: default; margin: 0 2px; }
+  .file-icon { font-size: 20px; margin-right: 12px; flex-shrink: 0; width: 24px; text-align: center; }
+  .file-size { font-size: 12px; color: #8b949e; margin-left: auto; flex-shrink: 0; padding-left: 12px; }
+  .upload-progress {
+    padding: 8px 16px; background: rgba(88,166,255,0.1); color: #58a6ff;
+    font-size: 13px; text-align: center; display: none;
+  }
+
+  /* --- File Viewer --- */
+  #fileview-view { display: none; height: 100%; flex-direction: column; }
+  .fileview-content {
+    flex: 1; overflow-y: auto; padding: 16px; -webkit-overflow-scrolling: touch;
+    font-size: 14px; line-height: 1.6;
+  }
+  .fileview-content pre {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5;
+    font-family: 'Menlo', 'DejaVu Sans Mono', 'Consolas', monospace;
+  }
+  .fileview-content pre code { background: none; padding: 0; }
+  .fileview-content img { max-width: 100%; border-radius: 8px; }
+  /* Markdown styles */
+  .fileview-content.markdown-body { color: #e6edf3; }
+  .fileview-content.markdown-body h1,
+  .fileview-content.markdown-body h2 { border-bottom: 1px solid #21262d; padding-bottom: 8px; margin: 20px 0 12px; }
+  .fileview-content.markdown-body h1 { font-size: 24px; }
+  .fileview-content.markdown-body h2 { font-size: 20px; }
+  .fileview-content.markdown-body h3 { font-size: 16px; margin: 16px 0 8px; }
+  .fileview-content.markdown-body p { margin: 0 0 12px; }
+  .fileview-content.markdown-body a { color: #58a6ff; }
+  .fileview-content.markdown-body code {
+    background: #161b22; padding: 2px 6px; border-radius: 4px; font-size: 13px;
+    font-family: 'Menlo', 'DejaVu Sans Mono', monospace;
+  }
+  .fileview-content.markdown-body blockquote {
+    border-left: 3px solid #30363d; padding: 4px 16px; color: #8b949e; margin: 0 0 12px;
+  }
+  .fileview-content.markdown-body ul,
+  .fileview-content.markdown-body ol { padding-left: 24px; margin: 0 0 12px; }
+  .fileview-content.markdown-body table { border-collapse: collapse; width: 100%; margin: 0 0 12px; }
+  .fileview-content.markdown-body th,
+  .fileview-content.markdown-body td { border: 1px solid #30363d; padding: 8px 12px; text-align: left; }
+  .fileview-content.markdown-body th { background: #161b22; }
+
+  /* Project edit modal */
+  .project-edit-btn {
+    background: none; border: none; color: #8b949e; font-size: 16px;
+    cursor: pointer; padding: 8px; min-width: 44px; min-height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation; flex-shrink: 0;
+  }
+  .project-edit-btn:hover { color: #58a6ff; }
 </style>
 </head>
 <body>
@@ -286,7 +349,10 @@
       <button class="btn-back" id="sessions-back-btn">&larr;</button>
       <h1 id="sessions-project-name"></h1>
     </div>
-    <button class="btn-new" id="new-session-btn">+ New</button>
+    <div class="view-header-right">
+      <button class="btn-new" id="files-btn" style="background:#21262d;font-size:13px;padding:8px 14px;margin-right:6px">Files</button>
+      <button class="btn-new" id="new-session-btn">+ New</button>
+    </div>
   </div>
   <div class="item-list" id="sessions-list"></div>
 </div>
@@ -303,11 +369,58 @@
   <div id="terminal-container"></div>
 </div>
 
+<!-- Files View -->
+<div id="files-view" style="display:none">
+  <div class="view-header">
+    <div class="view-header-left">
+      <button class="btn-hamburger sidebar-trigger"><div class="hamburger-lines"><span></span><span></span><span></span></div></button>
+      <button class="btn-back" id="files-back-btn">&larr;</button>
+      <h1>Files</h1>
+    </div>
+    <div class="view-header-right">
+      <button class="btn-new" id="files-upload-btn" style="font-size:13px;padding:8px 14px">Upload</button>
+    </div>
+  </div>
+  <div class="files-breadcrumb" id="files-breadcrumb"></div>
+  <div class="upload-progress" id="upload-progress"></div>
+  <div class="item-list" id="files-list"></div>
+  <input type="file" id="files-upload-input" multiple style="display:none">
+</div>
+
+<!-- File Viewer -->
+<div id="fileview-view" style="display:none">
+  <div class="view-header">
+    <div class="view-header-left">
+      <button class="btn-back" id="fileview-back-btn">&larr;</button>
+      <h1 id="fileview-name" style="font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></h1>
+    </div>
+    <div class="view-header-right">
+      <button class="btn-new" id="fileview-download-btn" style="font-size:13px;padding:8px 14px;background:#21262d">Download</button>
+    </div>
+  </div>
+  <div class="fileview-content" id="fileview-content"></div>
+</div>
+
+<!-- Project Edit Modal -->
+<div class="modal-overlay" id="project-edit-modal">
+  <div class="modal">
+    <h2>Edit Project</h2>
+    <label style="font-size:13px;color:#8b949e;display:block;margin-bottom:6px">Working Directory</label>
+    <input type="text" id="project-edit-dir" placeholder="e.g. /home/ubuntu/myproject (blank = home)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="modal-error" id="project-edit-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="project-edit-cancel">Cancel</button>
+      <button class="btn btn-primary" id="project-edit-save" style="max-width:none">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- New Project Modal -->
 <div class="modal-overlay" id="project-modal">
   <div class="modal">
     <h2>New Project</h2>
     <input type="text" id="project-name-input" placeholder="Project name" autocapitalize="off" autocorrect="off">
+    <input type="text" id="project-dir-input" placeholder="Working directory (optional)" autocapitalize="off" autocorrect="off" spellcheck="false">
     <div class="modal-actions">
       <button class="btn btn-secondary" id="project-modal-cancel">Cancel</button>
       <button class="btn btn-primary" id="project-modal-create" style="max-width:none">Create</button>
@@ -327,22 +440,45 @@
   </div>
 </div>
 
-<!-- Change Password Modal -->
-<div class="modal-overlay" id="password-modal">
-  <div class="modal">
-    <h2>Change Password</h2>
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settings-modal">
+  <div class="modal" style="max-height:85vh;overflow-y:auto">
+    <h2>Settings</h2>
+
+    <h3 style="font-size:14px;color:#8b949e;margin-bottom:12px">Change Password</h3>
     <input type="password" id="cp-current" placeholder="Current password" autocomplete="current-password">
     <input type="password" id="cp-new" placeholder="New password" autocomplete="new-password">
     <input type="password" id="cp-confirm" placeholder="Confirm new password" autocomplete="new-password">
     <div class="modal-error" id="cp-error"></div>
     <div class="modal-success" id="cp-success"></div>
+    <div class="modal-actions" style="margin-bottom:20px">
+      <button class="btn btn-primary" id="cp-save" style="max-width:none">Update Password</button>
+    </div>
+
+    <hr style="border:none;border-top:1px solid #21262d;margin:0 0 20px">
+
+    <h3 style="font-size:14px;color:#8b949e;margin-bottom:12px">Telegram Notifications</h3>
+    <p style="font-size:12px;color:#6e7681;margin-bottom:12px">Get notified when commands taking &gt;10s finish. Create a bot via <a href="https://t.me/BotFather" target="_blank" style="color:#58a6ff">@BotFather</a>.</p>
+    <input type="text" id="tg-bot-token" placeholder="Bot token" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <input type="text" id="tg-chat-id" placeholder="Chat ID" autocomplete="off" autocapitalize="off">
+    <div class="modal-error" id="tg-error"></div>
+    <div class="modal-success" id="tg-success"></div>
+    <div class="modal-actions" style="margin-bottom:20px">
+      <button class="btn btn-secondary" id="tg-test">Test</button>
+      <button class="btn btn-primary" id="tg-save" style="max-width:none">Save</button>
+    </div>
+
+    <hr style="border:none;border-top:1px solid #21262d;margin:0 0 20px">
+
     <div class="modal-actions">
-      <button class="btn btn-secondary" id="cp-cancel">Cancel</button>
-      <button class="btn btn-primary" id="cp-save" style="max-width:none">Save</button>
+      <button class="btn btn-secondary" id="settings-close" style="max-width:none">Close</button>
     </div>
   </div>
 </div>
 
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
@@ -355,6 +491,9 @@
   let currentProject = null;
   let currentSessionName = null;
   let currentTmuxName = null;
+  let pingInterval = null;
+  let reconnectTimeout = null;
+  let reconnectDelay = 1000;
 
   // --- API ---
   async function api(method, path, body) {
@@ -374,7 +513,7 @@
   }
 
   // --- Views ---
-  const allViews = ['setup', 'login', 'projects', 'sessions', 'terminal'];
+  const allViews = ['setup', 'login', 'projects', 'sessions', 'terminal', 'files', 'fileview'];
   function showView(name) {
     allViews.forEach(v => {
       document.getElementById(v + '-view').style.display = 'none';
@@ -413,15 +552,18 @@
 
   document.getElementById('sidebar-settings').addEventListener('click', () => {
     closeSidebar();
-    // Open change password modal
-    const cpCurrent = document.getElementById('cp-current');
-    const cpNew = document.getElementById('cp-new');
-    const cpConfirm = document.getElementById('cp-confirm');
-    cpCurrent.value = ''; cpNew.value = ''; cpConfirm.value = '';
+    // Reset password fields
+    document.getElementById('cp-current').value = '';
+    document.getElementById('cp-new').value = '';
+    document.getElementById('cp-confirm').value = '';
     document.getElementById('cp-error').style.display = 'none';
     document.getElementById('cp-success').style.display = 'none';
-    document.getElementById('password-modal').classList.add('active');
-    setTimeout(() => cpCurrent.focus(), 100);
+    // Reset telegram fields
+    document.getElementById('tg-error').style.display = 'none';
+    document.getElementById('tg-success').style.display = 'none';
+    // Load telegram config
+    loadTelegramConfig();
+    document.getElementById('settings-modal').classList.add('active');
   });
 
   async function loadSidebarData() {
@@ -557,12 +699,13 @@
   loginBtn.addEventListener('click', login);
   passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 
-  // --- Change Password ---
-  const passwordModal = document.getElementById('password-modal');
+  // --- Settings Modal ---
+  const settingsModal = document.getElementById('settings-modal');
 
-  document.getElementById('cp-cancel').addEventListener('click', () => passwordModal.classList.remove('active'));
-  passwordModal.addEventListener('click', e => { if (e.target === passwordModal) passwordModal.classList.remove('active'); });
+  document.getElementById('settings-close').addEventListener('click', () => settingsModal.classList.remove('active'));
+  settingsModal.addEventListener('click', e => { if (e.target === settingsModal) settingsModal.classList.remove('active'); });
 
+  // Change Password
   document.getElementById('cp-save').addEventListener('click', async () => {
     const cpError = document.getElementById('cp-error');
     const cpSuccess = document.getElementById('cp-success');
@@ -595,13 +738,68 @@
       cpSuccess.textContent = 'Password changed.';
       cpSuccess.style.display = 'block';
       cpCurrent.value = ''; cpNew.value = ''; cpConfirm.value = '';
-      setTimeout(() => passwordModal.classList.remove('active'), 1200);
     } catch {
       cpError.textContent = 'Something went wrong.';
       cpError.style.display = 'block';
     }
   });
   document.getElementById('cp-confirm').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cp-save').click(); });
+
+  // Telegram Notifications
+  async function loadTelegramConfig() {
+    try {
+      const config = await apiJson('GET', '/api/settings/telegram');
+      document.getElementById('tg-bot-token').value = '';
+      document.getElementById('tg-chat-id').value = config.chat_id || '';
+      document.getElementById('tg-bot-token').placeholder = config.configured ? `Bot token (${config.bot_token})` : 'Bot token';
+    } catch {}
+  }
+
+  document.getElementById('tg-save').addEventListener('click', async () => {
+    const tgError = document.getElementById('tg-error');
+    const tgSuccess = document.getElementById('tg-success');
+    tgError.style.display = 'none';
+    tgSuccess.style.display = 'none';
+    const botToken = document.getElementById('tg-bot-token').value.trim();
+    const chatId = document.getElementById('tg-chat-id').value.trim();
+    if (!botToken && !chatId) {
+      tgError.textContent = 'Enter bot token and chat ID.';
+      tgError.style.display = 'block';
+      return;
+    }
+    try {
+      const body = {};
+      if (botToken) body.bot_token = botToken;
+      if (chatId) body.chat_id = chatId;
+      const data = await apiJson('POST', '/api/settings/telegram', body);
+      tgSuccess.textContent = data.configured ? 'Telegram configured.' : 'Saved (incomplete config).';
+      tgSuccess.style.display = 'block';
+      loadTelegramConfig();
+    } catch {
+      tgError.textContent = 'Failed to save.';
+      tgError.style.display = 'block';
+    }
+  });
+
+  document.getElementById('tg-test').addEventListener('click', async () => {
+    const tgError = document.getElementById('tg-error');
+    const tgSuccess = document.getElementById('tg-success');
+    tgError.style.display = 'none';
+    tgSuccess.style.display = 'none';
+    try {
+      const data = await apiJson('POST', '/api/settings/telegram/test');
+      if (data.ok) {
+        tgSuccess.textContent = 'Test message sent!';
+        tgSuccess.style.display = 'block';
+      } else {
+        tgError.textContent = 'Failed to send. Check your bot token and chat ID.';
+        tgError.style.display = 'block';
+      }
+    } catch {
+      tgError.textContent = 'Failed to send.';
+      tgError.style.display = 'block';
+    }
+  });
 
   // --- Projects ---
   const projectsList = document.getElementById('projects-list');
@@ -616,12 +814,14 @@
       projectsList.innerHTML = projects.map(p => {
         const date = new Date(p.created_at * 1000);
         const timeStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const dirDisplay = p.directory ? p.directory.replace(/^\/home\/[^/]+/, '~') : '~ (home)';
         return `
-          <div class="card" data-project-id="${p.id}" data-project-name="${p.name}">
+          <div class="card" data-project-id="${p.id}" data-project-name="${p.name}" data-project-dir="${p.directory || ''}">
             <div class="card-info">
               <h3>${p.name}<span class="project-badge">${p.session_count} session${p.session_count !== 1 ? 's' : ''}</span></h3>
-              <p>Created ${timeStr}</p>
+              <p>${dirDisplay} &middot; ${timeStr}</p>
             </div>
+            <button class="project-edit-btn" data-edit-project="${p.id}" data-edit-dir="${p.directory || ''}" title="Edit">&#9881;</button>
             <button class="card-delete" data-delete-project="${p.id}" data-sessions="${p.session_count}" title="Delete">&times;</button>
           </div>`;
       }).join('');
@@ -629,6 +829,18 @@
   }
 
   projectsList.addEventListener('click', async e => {
+    const editBtn = e.target.closest('[data-edit-project]');
+    if (editBtn) {
+      e.stopPropagation();
+      const id = editBtn.dataset.editProject;
+      const dir = editBtn.dataset.editDir;
+      document.getElementById('project-edit-dir').value = dir;
+      document.getElementById('project-edit-error').style.display = 'none';
+      document.getElementById('project-edit-modal').classList.add('active');
+      document.getElementById('project-edit-modal').dataset.projectId = id;
+      setTimeout(() => document.getElementById('project-edit-dir').focus(), 100);
+      return;
+    }
     const deleteBtn = e.target.closest('[data-delete-project]');
     if (deleteBtn) {
       e.stopPropagation();
@@ -656,6 +868,7 @@
   const projectNameInput = document.getElementById('project-name-input');
   document.getElementById('new-project-btn').addEventListener('click', () => {
     projectNameInput.value = '';
+    document.getElementById('project-dir-input').value = '';
     projectModal.classList.add('active');
     setTimeout(() => projectNameInput.focus(), 100);
   });
@@ -665,13 +878,41 @@
   document.getElementById('project-modal-create').addEventListener('click', async () => {
     const name = projectNameInput.value.trim();
     if (!name) return;
+    const dir = document.getElementById('project-dir-input').value.trim();
     try {
-      await apiJson('POST', '/api/projects', { name });
+      const body = { name };
+      if (dir) body.directory = dir;
+      await apiJson('POST', '/api/projects', body);
       projectModal.classList.remove('active');
       loadProjects();
     } catch {}
   });
   projectNameInput.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('project-modal-create').click(); });
+
+  // Project edit modal
+  const projectEditModal = document.getElementById('project-edit-modal');
+  document.getElementById('project-edit-cancel').addEventListener('click', () => projectEditModal.classList.remove('active'));
+  projectEditModal.addEventListener('click', e => { if (e.target === projectEditModal) projectEditModal.classList.remove('active'); });
+  document.getElementById('project-edit-save').addEventListener('click', async () => {
+    const id = projectEditModal.dataset.projectId;
+    const dir = document.getElementById('project-edit-dir').value.trim();
+    const errEl = document.getElementById('project-edit-error');
+    errEl.style.display = 'none';
+    try {
+      const res = await api('PUT', `/api/projects/${id}`, { directory: dir });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error;
+        errEl.style.display = 'block';
+        return;
+      }
+      projectEditModal.classList.remove('active');
+      loadProjects();
+    } catch {
+      errEl.textContent = 'Failed to update.';
+      errEl.style.display = 'block';
+    }
+  });
 
   // --- Sessions ---
   const sessionsList = document.getElementById('sessions-list');
@@ -753,11 +994,63 @@
   const connStatus = document.getElementById('conn-status');
   const terminalContainer = document.getElementById('terminal-container');
 
+  function cleanupConnection() {
+    if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+    if (reconnectTimeout) { clearTimeout(reconnectTimeout); reconnectTimeout = null; }
+  }
+
+  function wsConnect(tmuxName) {
+    cleanupConnection();
+    if (currentWs) { currentWs.close(); currentWs = null; }
+
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&session=${encodeURIComponent(tmuxName)}`);
+    currentWs = ws;
+
+    ws.onopen = () => {
+      connStatus.textContent = 'Connected';
+      connStatus.className = 'connection-status connected';
+      reconnectDelay = 1000;
+      if (currentTerm) ws.send(JSON.stringify({ type: 'resize', cols: currentTerm.cols, rows: currentTerm.rows }));
+
+      // Heartbeat ping every 25s
+      pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+      }, 25000);
+    };
+
+    ws.onmessage = event => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'output' && currentTerm) currentTerm.write(msg.data);
+      } catch {}
+    };
+
+    ws.onclose = () => {
+      cleanupConnection();
+      // Only auto-reconnect if we're still on the terminal view for this session
+      if (currentTmuxName === tmuxName && document.getElementById('terminal-view').style.display === 'flex') {
+        connStatus.textContent = 'Reconnecting...';
+        connStatus.className = 'connection-status disconnected';
+        reconnectTimeout = setTimeout(() => {
+          wsConnect(tmuxName);
+          reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+        }, reconnectDelay);
+      } else {
+        connStatus.textContent = 'Disconnected';
+        connStatus.className = 'connection-status disconnected';
+      }
+    };
+
+    ws.onerror = () => {};
+  }
+
   function connectToSession(tmuxName) {
     currentTmuxName = tmuxName;
     terminalTitle.innerHTML = `<span class="breadcrumb-project">${currentProject.name}</span> / ${currentSessionName}`;
     showView('terminal');
 
+    cleanupConnection();
     if (currentWs) { currentWs.close(); currentWs = null; }
     if (currentTerm) { currentTerm.dispose(); currentTerm = null; }
     terminalContainer.innerHTML = '';
@@ -788,43 +1081,21 @@
     setTimeout(() => { fitAddon.fit(); }, 50);
     currentTerm = term;
 
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&session=${encodeURIComponent(tmuxName)}`);
-    currentWs = ws;
-
-    ws.onopen = () => {
-      connStatus.textContent = 'Connected';
-      connStatus.className = 'connection-status connected';
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    };
-
-    ws.onmessage = event => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'output') term.write(msg.data);
-      } catch {}
-    };
-
-    ws.onclose = () => {
-      connStatus.textContent = 'Disconnected';
-      connStatus.className = 'connection-status disconnected';
-    };
-
-    ws.onerror = () => {
-      connStatus.textContent = 'Disconnected';
-      connStatus.className = 'connection-status disconnected';
-    };
-
     term.onData(data => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
+      if (currentWs && currentWs.readyState === WebSocket.OPEN) currentWs.send(JSON.stringify({ type: 'input', data }));
     });
 
     term.onResize(({ cols, rows }) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      if (currentWs && currentWs.readyState === WebSocket.OPEN) currentWs.send(JSON.stringify({ type: 'resize', cols, rows }));
     });
 
     const resizeObserver = new ResizeObserver(() => { if (fitAddon) fitAddon.fit(); });
     resizeObserver.observe(terminalContainer);
+
+    wsConnect(tmuxName);
+
+    // Suppress browser context menu so shell right-click menus work
+    terminalContainer.addEventListener('contextmenu', e => e.preventDefault());
 
     // Mobile touch gestures: vertical scroll + horizontal swipe right
     let touchStartX = 0;
@@ -855,8 +1126,8 @@
       const dx = e.changedTouches[0].clientX - touchStartX;
       const dy = Math.abs(e.changedTouches[0].clientY - touchStartY);
       // Swipe right: >60px horizontal, <30px vertical drift → accept autosuggestion
-      if (dx > 60 && dy < 30 && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data: '\x1b[F' }));
+      if (dx > 60 && dy < 30 && currentWs && currentWs.readyState === WebSocket.OPEN) {
+        currentWs.send(JSON.stringify({ type: 'input', data: '\x1b[F' }));
         terminalContainer.style.outline = '2px solid #3fb950';
         setTimeout(() => { terminalContainer.style.outline = ''; }, 200);
       }
@@ -866,36 +1137,293 @@
     document.getElementById('paste-btn').addEventListener('click', async () => {
       try {
         const text = await navigator.clipboard.readText();
-        if (text && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data: text }));
+        if (text && currentWs && currentWs.readyState === WebSocket.OPEN) {
+          currentWs.send(JSON.stringify({ type: 'input', data: text }));
         }
       } catch (err) {
         // Fallback: prompt user if clipboard API denied
         const text = prompt('Paste text:');
-        if (text && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data: text }));
+        if (text && currentWs && currentWs.readyState === WebSocket.OPEN) {
+          currentWs.send(JSON.stringify({ type: 'input', data: text }));
         }
       }
-      term.focus();
+      if (currentTerm) currentTerm.focus();
     });
 
     term.focus();
   }
 
   document.getElementById('terminal-back-btn').addEventListener('click', () => {
+    cleanupConnection();
+    currentTmuxName = null; // stop auto-reconnect before closing
     if (currentWs) { currentWs.close(); currentWs = null; }
     if (currentTerm) { currentTerm.dispose(); currentTerm = null; }
     terminalContainer.innerHTML = '';
     currentSessionName = null;
-    currentTmuxName = null;
     showView('sessions');
   });
 
   window.addEventListener('popstate', () => {
-    if (document.getElementById('terminal-view').style.display === 'flex') {
+    if (document.getElementById('fileview-view').style.display === 'flex') {
+      document.getElementById('fileview-back-btn').click();
+    } else if (document.getElementById('files-view').style.display === 'flex') {
+      document.getElementById('files-back-btn').click();
+    } else if (document.getElementById('terminal-view').style.display === 'flex') {
       document.getElementById('terminal-back-btn').click();
     } else if (document.getElementById('sessions-view').style.display === 'flex') {
       document.getElementById('sessions-back-btn').click();
+    }
+  });
+
+  // --- Files ---
+  let currentFilesDir = null;
+  let currentFilesBaseDir = null;
+  const filesList = document.getElementById('files-list');
+  const filesBreadcrumb = document.getElementById('files-breadcrumb');
+
+  function getFileIcon(name, type) {
+    if (type === 'dir') return '\ud83d\udcc1';
+    const ext = name.split('.').pop().toLowerCase();
+    const icons = {
+      md: '\ud83d\udcdd', txt: '\ud83d\udcc4', log: '\ud83d\udcc4',
+      js: '\ud83d\udfe8', ts: '\ud83d\udfe6', jsx: '\ud83d\udfe8', tsx: '\ud83d\udfe6',
+      py: '\ud83d\udc0d', rb: '\ud83d\udc8e', go: '\ud83d\udfe6', rs: '\ud83e\udda0',
+      json: '{ }', yaml: '\u2699\ufe0f', yml: '\u2699\ufe0f', toml: '\u2699\ufe0f',
+      html: '\ud83c\udf10', css: '\ud83c\udfa8', scss: '\ud83c\udfa8',
+      sh: '\ud83d\udcbb', bash: '\ud83d\udcbb', zsh: '\ud83d\udcbb',
+      png: '\ud83d\uddbc\ufe0f', jpg: '\ud83d\uddbc\ufe0f', jpeg: '\ud83d\uddbc\ufe0f', gif: '\ud83d\uddbc\ufe0f', svg: '\ud83d\uddbc\ufe0f', webp: '\ud83d\uddbc\ufe0f',
+      pdf: '\ud83d\udcd5', zip: '\ud83d\udce6', tar: '\ud83d\udce6', gz: '\ud83d\udce6',
+    };
+    return icons[ext] || '\ud83d\udcc4';
+  }
+
+  function formatSize(bytes) {
+    if (bytes == null) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+  }
+
+  function isImageExt(name) {
+    return /\.(png|jpg|jpeg|gif|svg|webp|bmp|ico)$/i.test(name);
+  }
+
+  function isMarkdownExt(name) {
+    return /\.md$/i.test(name);
+  }
+
+  document.getElementById('files-btn').addEventListener('click', () => {
+    if (!currentProject) return;
+    const dir = document.querySelector(`.card[data-project-id="${currentProject.id}"]`)?.dataset.projectDir;
+    currentFilesBaseDir = dir || null;
+    loadFiles(dir || null);
+  });
+
+  document.getElementById('files-back-btn').addEventListener('click', () => {
+    showView('sessions');
+  });
+
+  async function loadFiles(dir) {
+    showView('files');
+    try {
+      const params = dir ? `?dir=${encodeURIComponent(dir)}` : `?dir=${encodeURIComponent('')}`;
+      const res = await api('GET', `/api/files${params}`);
+      const data = await res.json();
+      if (!res.ok) {
+        filesList.innerHTML = `<div class="list-empty"><span>\u26a0\ufe0f</span>${data.error}</div>`;
+        return;
+      }
+      currentFilesDir = data.path;
+      if (!currentFilesBaseDir) currentFilesBaseDir = data.path;
+      renderBreadcrumb(data.path);
+      if (data.items.length === 0 && data.path === currentFilesBaseDir) {
+        filesList.innerHTML = '<div class="list-empty"><span>\ud83d\udcc2</span>Empty directory</div>';
+        return;
+      }
+      let html = '';
+      // Show ".." unless we're at the base dir
+      if (data.path !== currentFilesBaseDir) {
+        html += `<div class="card" data-file-dir="${data.path.substring(0, data.path.lastIndexOf('/'))}">
+          <span class="file-icon">\u2b06\ufe0f</span>
+          <div class="card-info"><h3>..</h3><p>Parent directory</p></div>
+        </div>`;
+      }
+      for (const item of data.items) {
+        const fullPath = data.path + '/' + item.name;
+        if (item.type === 'dir') {
+          html += `<div class="card" data-file-dir="${fullPath}">
+            <span class="file-icon">${getFileIcon(item.name, 'dir')}</span>
+            <div class="card-info"><h3>${item.name}</h3></div>
+          </div>`;
+        } else {
+          html += `<div class="card" data-file-path="${fullPath}" data-file-name="${item.name}">
+            <span class="file-icon">${getFileIcon(item.name, 'file')}</span>
+            <div class="card-info"><h3>${item.name}</h3></div>
+            <span class="file-size">${formatSize(item.size)}</span>
+          </div>`;
+        }
+      }
+      filesList.innerHTML = html;
+    } catch {
+      filesList.innerHTML = '<div class="list-empty"><span>\u26a0\ufe0f</span>Failed to load files</div>';
+    }
+  }
+
+  function renderBreadcrumb(dirPath) {
+    const base = currentFilesBaseDir || '/';
+    const rel = dirPath.startsWith(base) ? dirPath.slice(base.length) : dirPath;
+    const parts = rel.split('/').filter(Boolean);
+    let html = `<span data-bc-dir="${base}">${currentProject?.name || 'root'}</span>`;
+    let accumulated = base;
+    for (const part of parts) {
+      accumulated += '/' + part;
+      html += `<span class="bc-sep">/</span><span data-bc-dir="${accumulated}">${part}</span>`;
+    }
+    filesBreadcrumb.innerHTML = html;
+    // Scroll breadcrumb to end
+    filesBreadcrumb.scrollLeft = filesBreadcrumb.scrollWidth;
+  }
+
+  filesBreadcrumb.addEventListener('click', e => {
+    const span = e.target.closest('[data-bc-dir]');
+    if (span) loadFiles(span.dataset.bcDir);
+  });
+
+  filesList.addEventListener('click', e => {
+    const dirCard = e.target.closest('[data-file-dir]');
+    if (dirCard) {
+      loadFiles(dirCard.dataset.fileDir);
+      return;
+    }
+    const fileCard = e.target.closest('[data-file-path]');
+    if (fileCard) {
+      openFileViewer(fileCard.dataset.filePath, fileCard.dataset.fileName);
+    }
+  });
+
+  // --- File Viewer ---
+  let currentViewFilePath = null;
+
+  async function openFileViewer(filePath, fileName) {
+    currentViewFilePath = filePath;
+    document.getElementById('fileview-name').textContent = fileName;
+    const content = document.getElementById('fileview-content');
+    content.className = 'fileview-content';
+    content.innerHTML = '<div style="text-align:center;padding:40px;color:#8b949e">Loading...</div>';
+    showView('fileview');
+
+    // Images: show inline
+    if (isImageExt(fileName)) {
+      content.innerHTML = `<img src="/api/files/download?path=${encodeURIComponent(filePath)}&token=${encodeURIComponent(token)}" alt="${fileName}">`;
+      return;
+    }
+
+    try {
+      const res = await api('GET', `/api/files/read?path=${encodeURIComponent(filePath)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        content.innerHTML = `<div style="text-align:center;padding:40px;color:#8b949e">${data.error}<br><br>Use the Download button instead.</div>`;
+        return;
+      }
+      if (data.binary) {
+        content.innerHTML = `<div style="text-align:center;padding:40px;color:#8b949e">Binary file (${formatSize(data.size)})<br><br>Use the Download button to view.</div>`;
+        return;
+      }
+
+      if (isMarkdownExt(fileName)) {
+        content.className = 'fileview-content markdown-body';
+        if (window.marked) {
+          window.marked.setOptions({
+            highlight: function(code, lang) {
+              if (window.hljs && lang && window.hljs.getLanguage(lang)) {
+                return window.hljs.highlight(code, { language: lang }).value;
+              }
+              return code;
+            }
+          });
+          content.innerHTML = window.marked.parse(data.content);
+        } else {
+          content.innerHTML = `<pre><code>${escapeHtml(data.content)}</code></pre>`;
+        }
+      } else {
+        // Code / text file
+        const ext = fileName.split('.').pop().toLowerCase();
+        const langMap = { js: 'javascript', ts: 'typescript', py: 'python', rb: 'ruby', sh: 'bash', yml: 'yaml', md: 'markdown' };
+        const lang = langMap[ext] || ext;
+        let highlighted = escapeHtml(data.content);
+        if (window.hljs) {
+          try {
+            if (window.hljs.getLanguage(lang)) {
+              highlighted = window.hljs.highlight(data.content, { language: lang }).value;
+            } else {
+              highlighted = window.hljs.highlightAuto(data.content).value;
+            }
+          } catch {}
+        }
+        content.innerHTML = `<pre><code class="hljs">${highlighted}</code></pre>`;
+      }
+    } catch {
+      content.innerHTML = '<div style="text-align:center;padding:40px;color:#f85149">Failed to load file</div>';
+    }
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  document.getElementById('fileview-back-btn').addEventListener('click', () => {
+    loadFiles(currentFilesDir);
+  });
+
+  document.getElementById('fileview-download-btn').addEventListener('click', () => {
+    if (!currentViewFilePath) return;
+    const a = document.createElement('a');
+    a.href = `/api/files/download?path=${encodeURIComponent(currentViewFilePath)}&token=${encodeURIComponent(token)}`;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  });
+
+  // --- File Upload ---
+  const uploadInput = document.getElementById('files-upload-input');
+  const uploadProgress = document.getElementById('upload-progress');
+
+  document.getElementById('files-upload-btn').addEventListener('click', () => {
+    uploadInput.value = '';
+    uploadInput.click();
+  });
+
+  uploadInput.addEventListener('change', async () => {
+    if (!uploadInput.files.length || !currentFilesDir) return;
+    uploadProgress.textContent = `Uploading ${uploadInput.files.length} file(s)...`;
+    uploadProgress.style.display = 'block';
+    try {
+      const formData = new FormData();
+      formData.append('dir', currentFilesDir);
+      for (const f of uploadInput.files) {
+        formData.append('files', f);
+      }
+      const res = await fetch('/api/files/upload', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        uploadProgress.textContent = `Uploaded ${data.uploaded.length} file(s)`;
+        setTimeout(() => { uploadProgress.style.display = 'none'; }, 2000);
+        loadFiles(currentFilesDir);
+      } else {
+        uploadProgress.textContent = data.error || 'Upload failed';
+        uploadProgress.style.color = '#f85149';
+        setTimeout(() => { uploadProgress.style.display = 'none'; uploadProgress.style.color = ''; }, 3000);
+      }
+    } catch {
+      uploadProgress.textContent = 'Upload failed';
+      uploadProgress.style.color = '#f85149';
+      setTimeout(() => { uploadProgress.style.display = 'none'; uploadProgress.style.color = ''; }, 3000);
     }
   });
 
@@ -919,6 +1447,34 @@
       showView('login');
     }
   }
+  // --- Reconnect on mobile wake-up ---
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && currentTmuxName && currentWs && currentWs.readyState !== WebSocket.OPEN) {
+      reconnectDelay = 1000;
+      wsConnect(currentTmuxName);
+    }
+  });
+
+  // --- Mobile keyboard viewport fix ---
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      const keyboardHeight = window.innerHeight - window.visualViewport.height;
+      if (keyboardHeight > 50) {
+        document.body.style.height = window.visualViewport.height + 'px';
+      } else {
+        document.body.style.height = '100%';
+      }
+      if (fitAddon) fitAddon.fit();
+    });
+  }
+
+  // Scroll modal inputs into view when keyboard appears
+  document.querySelectorAll('.modal input').forEach(input => {
+    input.addEventListener('focus', () => {
+      setTimeout(() => input.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+    });
+  });
+
   init();
 })();
 </script>

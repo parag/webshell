@@ -10,6 +10,7 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
+const multer = require('multer');
 const HOME_DIR = os.homedir();
 const DATA_DIR = path.join(__dirname, 'data');
 
@@ -44,6 +45,13 @@ db.exec(`
   );
 `);
 
+// Migration: add directory column to projects
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN directory TEXT DEFAULT NULL");
+} catch {
+  // column already exists
+}
+
 function getPasswordHash() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'password_hash'").get();
   return row ? row.value : null;
@@ -55,6 +63,36 @@ function setPasswordHash(hash) {
 
 function isSetupDone() {
   return getPasswordHash() !== null;
+}
+
+// --- Telegram ---
+
+function getTelegramConfig() {
+  const botToken = db.prepare("SELECT value FROM settings WHERE key = 'telegram_bot_token'").get();
+  const chatId = db.prepare("SELECT value FROM settings WHERE key = 'telegram_chat_id'").get();
+  return {
+    bot_token: botToken?.value || '',
+    chat_id: chatId?.value || '',
+    configured: !!(botToken?.value && chatId?.value),
+  };
+}
+
+async function sendTelegramMessage(text) {
+  const config = getTelegramConfig();
+  if (!config.configured) return false;
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${config.bot_token}/sendMessage`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: config.chat_id, text, parse_mode: 'HTML' }),
+      }
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 const app = express();
@@ -152,6 +190,51 @@ app.post('/api/change-password', authMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Telegram API ---
+
+app.get('/api/settings/telegram', authMiddleware, (req, res) => {
+  const config = getTelegramConfig();
+  res.json({
+    bot_token: config.bot_token ? '***' + config.bot_token.slice(-4) : '',
+    chat_id: config.chat_id,
+    configured: config.configured,
+  });
+});
+
+app.post('/api/settings/telegram', authMiddleware, (req, res) => {
+  const { bot_token, chat_id } = req.body || {};
+  if (bot_token !== undefined) {
+    if (bot_token) {
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_bot_token', ?)").run(bot_token);
+    } else {
+      db.prepare("DELETE FROM settings WHERE key = 'telegram_bot_token'").run();
+    }
+  }
+  if (chat_id !== undefined) {
+    if (chat_id) {
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_chat_id', ?)").run(String(chat_id));
+    } else {
+      db.prepare("DELETE FROM settings WHERE key = 'telegram_chat_id'").run();
+    }
+  }
+  res.json({ ok: true, configured: getTelegramConfig().configured });
+});
+
+app.post('/api/settings/telegram/test', authMiddleware, async (req, res) => {
+  const ok = await sendTelegramMessage('🔔 Webshell test notification');
+  res.json({ ok });
+});
+
+// Notify endpoint (no auth — only accessible from localhost)
+app.post('/api/notify', async (req, res) => {
+  const { message, session, command, duration } = req.body || {};
+  const cmdDisplay = command ? command.substring(0, 200) : '';
+  const text = message ||
+    `✅ Task completed in <b>${session || 'unknown'}</b>\n<code>${cmdDisplay}</code>\nDuration: ${duration || '?'}s`;
+  const ok = await sendTelegramMessage(text);
+  res.json({ ok });
+});
+
 // --- Validation ---
 
 function isValidName(name) {
@@ -189,7 +272,7 @@ function killTmuxSession(tmuxName) {
 
 app.get('/api/projects', authMiddleware, (req, res) => {
   const projects = db.prepare(`
-    SELECT p.id, p.name, p.created_at,
+    SELECT p.id, p.name, p.directory, p.created_at,
            COUNT(s.id) as session_count
     FROM projects p
     LEFT JOIN sessions s ON s.project_id = p.id
@@ -200,16 +283,34 @@ app.get('/api/projects', authMiddleware, (req, res) => {
 });
 
 app.post('/api/projects', authMiddleware, (req, res) => {
-  const { name } = req.body || {};
+  const { name, directory } = req.body || {};
   if (!name || !isValidName(name)) {
     return res.status(400).json({ error: 'Invalid name. Use alphanumeric, dash, underscore only.' });
   }
+  if (directory && !fs.existsSync(directory)) {
+    return res.status(400).json({ error: 'Directory does not exist.' });
+  }
   try {
-    const result = db.prepare('INSERT INTO projects (name) VALUES (?)').run(name);
-    res.json({ id: result.lastInsertRowid, name });
+    const result = db.prepare('INSERT INTO projects (name, directory) VALUES (?, ?)').run(name, directory || null);
+    res.json({ id: result.lastInsertRowid, name, directory: directory || null });
   } catch {
     res.status(400).json({ error: 'Project already exists.' });
   }
+});
+
+app.put('/api/projects/:id', authMiddleware, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid project id.' });
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+  const { directory } = req.body || {};
+  if (directory !== undefined) {
+    if (directory && !fs.existsSync(directory)) {
+      return res.status(400).json({ error: 'Directory does not exist.' });
+    }
+    db.prepare('UPDATE projects SET directory = ? WHERE id = ?').run(directory || null, id);
+  }
+  res.json({ ok: true });
 });
 
 app.delete('/api/projects/:id', authMiddleware, (req, res) => {
@@ -250,7 +351,7 @@ app.post('/api/projects/:id/sessions', authMiddleware, (req, res) => {
   const projectId = parseInt(req.params.id, 10);
   if (isNaN(projectId)) return res.status(400).json({ error: 'Invalid project id.' });
 
-  const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(projectId);
+  const project = db.prepare('SELECT name, directory FROM projects WHERE id = ?').get(projectId);
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
   const name = req.body.name || `s-${Date.now()}`;
@@ -259,13 +360,14 @@ app.post('/api/projects/:id/sessions', authMiddleware, (req, res) => {
   }
 
   const tmuxName = `${project.name}--${name}`;
+  const cwd = project.directory || HOME_DIR;
 
   try {
     const result = db.prepare(
       'INSERT INTO sessions (project_id, name, tmux_name) VALUES (?, ?, ?)'
     ).run(projectId, name, tmuxName);
 
-    execSync(`tmux new-session -d -s '${tmuxName}' -c '${HOME_DIR}'`, { timeout: 5000 });
+    execSync(`tmux new-session -d -s '${tmuxName}' -c '${cwd}'`, { timeout: 5000 });
     res.json({ id: result.lastInsertRowid, name, tmux_name: tmuxName });
   } catch (e) {
     // Clean up DB row if tmux failed
@@ -284,6 +386,120 @@ app.delete('/api/sessions/:id', authMiddleware, (req, res) => {
   killTmuxSession(session.tmux_name);
   db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
   res.json({ ok: true });
+});
+
+// --- Files API ---
+
+const upload = multer({ dest: path.join(DATA_DIR, 'uploads_tmp'), limits: { fileSize: 100 * 1024 * 1024 } });
+
+function safePath(base, rel) {
+  const resolved = path.resolve(base, rel || '');
+  if (!resolved.startsWith(base)) return null;
+  return resolved;
+}
+
+app.get('/api/files', authMiddleware, (req, res) => {
+  const dir = req.query.dir;
+  if (!dir) return res.status(400).json({ error: 'dir is required' });
+  try {
+    const resolved = path.resolve(dir);
+    const entries = fs.readdirSync(resolved, { withFileTypes: true });
+    const items = [];
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue; // skip hidden by default
+      try {
+        const fullPath = path.join(resolved, e.name);
+        const stat = fs.statSync(fullPath);
+        items.push({
+          name: e.name,
+          type: e.isDirectory() ? 'dir' : 'file',
+          size: e.isDirectory() ? null : stat.size,
+          modified: Math.floor(stat.mtimeMs / 1000),
+        });
+      } catch { /* skip inaccessible */ }
+    }
+    // Sort: dirs first, then files, alphabetical
+    items.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+    res.json({ path: resolved, items, showHidden: false });
+  } catch (e) {
+    res.status(400).json({ error: 'Cannot read directory.' });
+  }
+});
+
+app.get('/api/files/read', authMiddleware, (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'path is required' });
+  try {
+    const resolved = path.resolve(filePath);
+    const stat = fs.statSync(resolved);
+    if (stat.size > 2 * 1024 * 1024) {
+      return res.status(413).json({ error: 'File too large to preview (>2MB). Use download.' });
+    }
+    // Check if binary
+    const buf = Buffer.alloc(512);
+    const fd = fs.openSync(resolved, 'r');
+    const bytesRead = fs.readSync(fd, buf, 0, 512, 0);
+    fs.closeSync(fd);
+    let isBinary = false;
+    for (let i = 0; i < bytesRead; i++) {
+      if (buf[i] === 0) { isBinary = true; break; }
+    }
+    if (isBinary) {
+      return res.json({ binary: true, size: stat.size });
+    }
+    const content = fs.readFileSync(resolved, 'utf8');
+    res.json({ content, size: stat.size });
+  } catch {
+    res.status(400).json({ error: 'Cannot read file.' });
+  }
+});
+
+app.get('/api/files/download', (req, res, next) => {
+  // Allow token via query param for direct links (img src, download)
+  const t = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  if (t && tokens.has(t)) return next();
+  res.status(401).json({ error: 'Unauthorized' });
+}, (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'path is required' });
+  try {
+    const resolved = path.resolve(filePath);
+    if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+    res.download(resolved);
+  } catch {
+    res.status(400).json({ error: 'Cannot download file.' });
+  }
+});
+
+app.post('/api/files/upload', authMiddleware, upload.array('files', 20), (req, res) => {
+  const targetDir = req.body.dir;
+  if (!targetDir) {
+    // Clean up temp files
+    (req.files || []).forEach(f => { try { fs.unlinkSync(f.path); } catch {} });
+    return res.status(400).json({ error: 'dir is required' });
+  }
+  try {
+    const resolved = path.resolve(targetDir);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      (req.files || []).forEach(f => { try { fs.unlinkSync(f.path); } catch {} });
+      return res.status(400).json({ error: 'Target directory does not exist.' });
+    }
+    const uploaded = [];
+    for (const f of (req.files || [])) {
+      const dest = path.join(resolved, f.originalname);
+      fs.renameSync(f.path, dest);
+      uploaded.push(f.originalname);
+    }
+    res.json({ ok: true, uploaded });
+  } catch (e) {
+    (req.files || []).forEach(f => { try { fs.unlinkSync(f.path); } catch {} });
+    res.status(500).json({ error: 'Upload failed.' });
+  }
 });
 
 // --- WebSocket terminal ---
@@ -348,7 +564,9 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw);
-      if (msg.type === 'input') {
+      if (msg.type === 'ping') {
+        if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'pong' }));
+      } else if (msg.type === 'input') {
         term.write(msg.data);
       } else if (msg.type === 'resize' && msg.cols > 0 && msg.rows > 0) {
         term.resize(Math.min(msg.cols, 500), Math.min(msg.rows, 200));
