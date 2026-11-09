@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0d1117">
+<title>Grid — webshell</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root { color-scheme: dark; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; }
+  button { font-family: inherit; }
+
+  /* --- Header --- */
+  .grid-header {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    background: #161b22; border-bottom: 1px solid #21262d; flex-shrink: 0;
+  }
+  .btn-back {
+    background: none; border: none; color: #8b949e; font-size: 15px; font-weight: 500;
+    cursor: pointer; padding: 8px 10px; min-height: 40px; border-radius: 8px;
+    display: flex; align-items: center; touch-action: manipulation; white-space: nowrap;
+  }
+  .btn-back:hover { color: #e6edf3; background: #21262d; }
+  .grid-header h1 { font-size: 18px; font-weight: 600; margin-right: auto; }
+  .layout-select {
+    background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px;
+    padding: 6px 8px; font-size: 13px; min-height: 36px; cursor: pointer;
+  }
+  .layout-select:focus { outline: none; border-color: #58a6ff; }
+  .btn-tool {
+    background: none; border: 1px solid #30363d; color: #8b949e; font-size: 16px;
+    cursor: pointer; padding: 4px 10px; border-radius: 6px; min-width: 36px; min-height: 36px;
+    display: flex; align-items: center; justify-content: center; touch-action: manipulation;
+  }
+  .btn-tool:hover { color: #e6edf3; background: #21262d; }
+  .btn-new {
+    background: #238636; color: #fff; padding: 8px 14px; font-size: 14px;
+    font-weight: 600; border: none; border-radius: 8px; cursor: pointer;
+    min-height: 36px; touch-action: manipulation; white-space: nowrap;
+  }
+  .btn-new:hover { background: #2ea043; }
+  .conn-summary {
+    font-size: 12px; padding: 4px 10px; border-radius: 12px; font-weight: 500;
+    flex-shrink: 0; color: #8b949e; background: rgba(139,148,158,0.1); white-space: nowrap;
+  }
+  .conn-summary.all { color: #3fb950; background: rgba(63,185,80,0.1); }
+  .conn-summary.some { color: #d29922; background: rgba(210,153,34,0.1); }
+  .conn-summary.none { color: #f85149; background: rgba(248,81,73,0.1); }
+
+  /* --- Status dots (shared) --- */
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #8b949e; }
+  .dot.connected { background: #3fb950; }
+  .dot.connecting, .dot.reconnecting { background: #d29922; animation: pulse 1.2s ease-in-out infinite; }
+  .dot.dead { background: #f85149; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+
+  /* --- Chip strips (maximise switcher + mobile tabs) --- */
+  .strip {
+    display: flex; align-items: center; gap: 6px; padding: 6px 12px;
+    border-bottom: 1px solid #21262d; flex-shrink: 0; overflow-x: auto;
+    white-space: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .strip::-webkit-scrollbar { display: none; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+    background: #161b22; border: 1px solid #21262d; color: #8b949e;
+    border-radius: 14px; padding: 4px 12px; font-size: 13px; cursor: pointer;
+    min-height: 30px; max-width: 220px; touch-action: manipulation;
+  }
+  .chip span.label { overflow: hidden; text-overflow: ellipsis; }
+  .chip:hover { color: #e6edf3; border-color: #30363d; }
+  .chip[aria-current="true"], .chip[aria-selected="true"] { color: #e6edf3; border-color: #58a6ff; background: rgba(88,166,255,0.1); }
+  .chip.add { color: #3fb950; font-weight: 600; font-size: 16px; padding: 2px 14px; }
+  .strip .spacer { margin-left: auto; }
+  .strip .btn-tool { min-height: 30px; font-size: 14px; flex-shrink: 0; }
+
+  /* --- Main area --- */
+  main { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+  .grid {
+    flex: 1; min-height: 0; display: grid; gap: 6px; padding: 6px;
+    overflow: auto; -webkit-overflow-scrolling: touch;
+  }
+  .grid.single { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: minmax(0, 1fr) !important; overflow: hidden; }
+
+  /* --- Pane --- */
+  .pane {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    background: #0d1117; border: 1px solid #21262d; border-radius: 8px; overflow: hidden;
+  }
+  .pane.focused { border-color: #58a6ff; box-shadow: 0 0 0 1px rgba(88,166,255,0.35); }
+  .pane-header {
+    display: flex; align-items: center; gap: 8px; padding: 2px 4px 2px 10px;
+    background: #161b22; border-bottom: 1px solid #21262d; flex-shrink: 0;
+    user-select: none; cursor: default; min-height: 32px;
+  }
+  .pane-name { flex: 1; min-width: 0; font-size: 13px; color: #8b949e; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pane.focused .pane-name { color: #e6edf3; }
+  .pane-state { font-size: 11px; color: #d29922; white-space: nowrap; }
+  .pane-state.dead { color: #f85149; }
+  .pane-btn {
+    background: none; border: none; color: #8b949e; font-size: 16px; line-height: 1;
+    cursor: pointer; width: 30px; height: 28px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center; touch-action: manipulation; flex-shrink: 0;
+  }
+  .pane-btn:hover { color: #e6edf3; background: #21262d; }
+  .pane-btn.close:hover { color: #f85149; }
+  .pane-body { flex: 1; min-height: 0; position: relative; }
+  .pane-term { position: absolute; inset: 2px 0 0 4px; overflow: hidden; touch-action: none; }
+  .pane-dead {
+    position: absolute; inset: 0; background: rgba(13,17,23,0.88);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; text-align: center; padding: 16px; color: #e6edf3; font-size: 14px;
+  }
+  .pane-dead .btn-secondary { padding: 8px 16px; font-size: 14px; min-height: 36px; }
+
+  /* --- Page states --- */
+  .page-state {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; padding: 40px 20px; text-align: center; color: #8b949e; font-size: 15px;
+  }
+  .page-state .big-icon { font-size: 40px; opacity: 0.5; }
+  .btn {
+    padding: 14px 24px; font-size: 16px; font-weight: 600; border: none;
+    border-radius: 8px; cursor: pointer; transition: background 0.15s;
+    min-height: 48px; touch-action: manipulation;
+  }
+  .btn-primary { background: #238636; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary { background: #21262d; color: #e6edf3; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+  .btn-secondary:hover { background: #30363d; }
+  .spinner {
+    width: 22px; height: 22px; border: 2px solid #30363d; border-top-color: #58a6ff;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* --- Modal (add picker) --- */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    z-index: 100; align-items: flex-end; justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: #161b22; border-top: 1px solid #30363d;
+    border-radius: 16px 16px 0 0; padding: 20px 20px 28px;
+    width: 100%; max-width: 560px; max-height: 85vh; display: flex; flex-direction: column;
+  }
+  @media (min-width: 769px) {
+    .modal-overlay { align-items: center; }
+    .modal { border: 1px solid #30363d; border-radius: 16px; }
+  }
+  .modal h2 { font-size: 18px; margin-bottom: 14px; }
+  .modal input[type="search"] {
+    width: 100%; padding: 12px 14px; font-size: 16px;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    color: #e6edf3; outline: none; margin-bottom: 12px;
+  }
+  .modal input[type="search"]:focus { border-color: #58a6ff; }
+  .picker-list { flex: 1; min-height: 120px; overflow-y: auto; -webkit-overflow-scrolling: touch; margin: 0 -8px 12px; padding: 0 8px; }
+  .picker-group { font-size: 12px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 6px; }
+  .picker-group:first-child { margin-top: 0; }
+  .picker-row {
+    display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 6px;
+    background: #0d1117; border: 1px solid #21262d; border-radius: 8px; cursor: pointer; touch-action: manipulation;
+  }
+  .picker-row:hover { border-color: #30363d; }
+  .picker-row.checked { border-color: #58a6ff; background: rgba(88,166,255,0.06); }
+  .picker-row input { width: 18px; height: 18px; accent-color: #238636; flex-shrink: 0; }
+  .picker-info { flex: 1; min-width: 0; }
+  .picker-name { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .picker-name .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .picker-meta { font-size: 12px; color: #8b949e; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { font-size: 11px; font-weight: 500; color: #3fb950; background: rgba(63,185,80,0.1); padding: 1px 8px; border-radius: 10px; flex-shrink: 0; }
+  .picker-msg { color: #8b949e; font-size: 14px; text-align: center; padding: 32px 12px; line-height: 1.6; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .picker-msg code { background: #0d1117; border: 1px solid #21262d; padding: 1px 6px; border-radius: 4px; font-size: 13px; color: #e6edf3; }
+  .picker-msg.error { color: #f85149; }
+  .picker-note { font-size: 12px; color: #6e7681; margin-top: 8px; line-height: 1.5; }
+  .modal-actions { display: flex; gap: 12px; }
+  .modal-actions .btn { flex: 1; }
+
+  /* --- Toasts --- */
+  .toast {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 10000;
+    color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4); max-width: calc(100vw - 32px);
+    display: flex; align-items: center; gap: 14px;
+  }
+  #copy-toast { bottom: 76px; background: #1f6feb; }
+  #notice-toast { bottom: 20px; background: #30363d; border: 1px solid #484f58; }
+  #notice-toast.error { background: #3d1d20; border-color: #f85149; }
+  #notice-toast button {
+    background: none; border: none; color: #58a6ff; font-weight: 600; font-size: 14px;
+    cursor: pointer; padding: 4px 6px; touch-action: manipulation;
+  }
+
+  /* --- Mobile: one pane at a time --- */
+  body.mobile .grid { padding: 0; gap: 0; }
+  body.mobile .pane { border: none; border-radius: 0; box-shadow: none; }
+  body.mobile .pane-max { display: none; }
+  body.mobile .layout-select { display: none; }
+  body:not(.mobile) #mobile-tabs { display: none !important; }
+  @media (max-width: 480px) {
+    .grid-header { gap: 6px; padding: 6px 8px; }
+    .grid-header h1 { font-size: 16px; }
+    .btn-new { padding: 8px 10px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="grid-header">
+  <button class="btn-back" id="back-btn" title="Back to projects" aria-label="Back to projects">&larr; Back</button>
+  <h1>Grid</h1>
+  <select class="layout-select" id="layout-select" title="Grid layout" aria-label="Grid layout">
+    <option value="auto">Auto</option>
+    <option value="columns">Columns</option>
+    <option value="rows">Rows</option>
+  </select>
+  <button class="btn-tool" id="paste-btn" title="Paste into focused terminal" aria-label="Paste into focused terminal">&#x1f4cb;</button>
+  <span class="conn-summary" id="conn-summary" role="status" aria-live="polite" title="Connected terminals">&#9679; 0/0</span>
+  <button class="btn-new" id="add-btn" title="Add tmux sessions to the grid">+ Add</button>
+</header>
+
+<!-- Maximise switcher (desktop) -->
+<nav class="strip" id="max-strip" aria-label="Maximised terminal" hidden></nav>
+<!-- Tabs (mobile) -->
+<nav class="strip" id="mobile-tabs" role="tablist" aria-label="Terminals" hidden></nav>
+
+<main>
+  <div class="page-state" id="loading-state">
+    <div class="spinner" aria-hidden="true"></div>
+    <div>Loading grid…</div>
+  </div>
+  <div class="page-state" id="load-error-state" hidden>
+    <div class="big-icon" aria-hidden="true">&#9888;</div>
+    <div>Couldn't load your grid.</div>
+    <button class="btn btn-secondary" id="load-retry-btn">Retry</button>
+  </div>
+  <div class="page-state" id="empty-state" hidden>
+    <div class="big-icon" aria-hidden="true">&#9638;</div>
+    <div>No terminals in your grid yet.</div>
+    <button class="btn btn-primary" id="empty-add-btn">+ Add tmux sessions</button>
+  </div>
+  <div class="grid" id="grid" hidden></div>
+</main>
+
+<!-- Add picker -->
+<div class="modal-overlay" id="picker-modal" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+  <div class="modal">
+    <h2 id="picker-title">Add tmux sessions</h2>
+    <input type="search" id="picker-filter" placeholder="Filter sessions" aria-label="Filter sessions" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="picker-list" id="picker-list"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="picker-cancel">Cancel</button>
+      <button class="btn btn-primary" id="picker-add" disabled>Add 0</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="copy-toast" role="status" hidden></div>
+<div class="toast" id="notice-toast" role="status" aria-live="polite" hidden><span id="notice-text"></span><button id="notice-action" hidden></button></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+<script>
+(function() {
+  'use strict';
+
+  // ===================================================================
+  // Constants & helpers
+  // ===================================================================
+  const token = sessionStorage.getItem('token');
+  if (!token) { location.replace('/'); return; }
+
+  const LAYOUTS = ['auto', 'columns', 'rows'];
+  const SAVE_DEBOUNCE_MS = 500;
+  const FIT_DEBOUNCE_MS = 60;
+  const PING_MS = 25000;
+  const RECONNECT_MIN_MS = 1000;
+  const RECONNECT_MAX_MS = 30000;
+  const UNDO_MS = 5000;
+
+  const TERM_OPTIONS = {
+    cursorBlink: false,
+    fontSize: 13,
+    fontFamily: "'Menlo', 'DejaVu Sans Mono', 'Consolas', monospace",
+    theme: {
+      background: '#0d1117',
+      foreground: '#e6edf3',
+      cursor: '#58a6ff',
+      selectionBackground: '#264f78',
+      black: '#484f58', red: '#ff7b72', green: '#3fb950', yellow: '#d29922',
+      blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39d353', white: '#b1bac4',
+      brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364',
+      brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#d2a8ff',
+      brightCyan: '#56d364', brightWhite: '#f0f6fc',
+    },
+    allowProposedApi: true,
+    scrollback: 5000,
+  };
+
+  const $ = id => document.getElementById(id);
+
+  // Tiny DOM builder: h('div', {class:'x', onclick: fn, 'aria-label': 'y'}, child, ...)
+  function h(tag, props, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props || {})) {
+      if (v == null || v === false) continue;
+      if (k === 'class') el.className = v;
+      else if (k === 'text') el.textContent = v;
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+      else if (k in el) el[k] = v;
+      else el.setAttribute(k, v === true ? '' : v);
+    }
+    for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
+    return el;
+  }
+
+  function relTime(unixSeconds) {
+    if (!unixSeconds) return '';
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds));
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+  }
+
+  function shortPath(p) {
+    if (!p) return '';
+    const parts = p.split('/').filter(Boolean);
+    if (parts.length === 0) return '/';
+    return (parts.length > 2 ? '…/' : '/') + parts.slice(-2).join('/');
+  }
+
+  // --- API ---
+  function goHome() { location.href = '/'; }
+
+  async function api(method, path, body) {
+    const opts = { method, headers: { 'Authorization': `Bearer ${token}` } };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(path, opts);
+    if (res.status === 401) {
+      sessionStorage.removeItem('token');
+      goHome();
+      throw new Error('Unauthorized');
+    }
+    return res;
+  }
+
+  // ===================================================================
+  // Clipboard (OSC 52) — one shared copy toast
+  // ===================================================================
+  const copyToast = $('copy-toast');
+
+  function execCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    ta.remove();
+    const p = activePane();
+    if (p) p.focus();
+    return ok;
+  }
+
+  // Browsers may reject clipboard writes without a user gesture (Safari, plain HTTP),
+  // so fall back to a toast the user taps to complete the copy.
+  function copyToClipboard(text) {
+    const show = (msg, clickable) => {
+      copyToast.textContent = msg;
+      copyToast.hidden = false;
+      copyToast.style.cursor = clickable ? 'pointer' : 'default';
+      copyToast.onclick = clickable ? () => {
+        const done = () => show('Copied to clipboard', false);
+        if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => { if (execCopy(text)) done(); });
+        else if (execCopy(text)) done();
+      } : null;
+      clearTimeout(copyToast._timer);
+      copyToast._timer = setTimeout(() => { copyToast.hidden = true; }, clickable ? 8000 : 1500);
+    };
+    const fallback = () => {
+      if (execCopy(text)) show('Copied to clipboard', false);
+      else show('Tap to copy selection to clipboard', true);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => show('Copied to clipboard', false), fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  // ===================================================================
+  // Notice toast (undo / errors)
+  // ===================================================================
+  const noticeToast = $('notice-toast');
+  const noticeText = $('notice-text');
+  const noticeAction = $('notice-action');
+  let noticeTimer = null;
+
+  function showNotice(msg, { actionLabel, onAction, error = false, timeout = UNDO_MS } = {}) {
+    clearTimeout(noticeTimer);
+    noticeText.textContent = msg;
+    noticeToast.classList.toggle('error', error);
+    noticeAction.hidden = !actionLabel;
+    noticeAction.textContent = actionLabel || '';
+    noticeAction.onclick = actionLabel ? () => { hideNotice(); onAction(); } : null;
+    noticeToast.hidden = false;
+    noticeTimer = setTimeout(hideNotice, timeout);
+  }
+
+  function hideNotice() {
+    clearTimeout(noticeTimer);
+    noticeToast.hidden = true;
+    noticeAction.onclick = null;
+  }
+
+  // ===================================================================
+  // Pane — one terminal tile with its own Terminal, FitAddon and WebSocket
+  // ===================================================================
+  class Pane {
+    /**
+     * @param {string} name tmux session name
+     * @param {object} hooks { onStatus, onFocus, onRemove, onToggleMax, onRejected }
+     */
+    constructor(name, hooks) {
+      this.name = name;
+      this.hooks = hooks;
+      this.status = 'connecting';
+      this.ws = null;
+      this.opened = false;
+      this.disposed = false;
+      this.everConnected = false;
+      this.reconnectDelay = RECONNECT_MIN_MS;
+      this.reconnectTimer = null;
+      this.pingTimer = null;
+      this.fitTimer = null;
+
+      this._buildDom();
+      this._buildTerminal();
+      this._attachListeners();
+      this.connect();
+    }
+
+    // --- DOM ---
+    _buildDom() {
+      this.dotEl = h('span', { class: 'dot connecting', 'aria-hidden': 'true' });
+      this.stateEl = h('span', { class: 'pane-state' });
+      this.maxBtn = h('button', { class: 'pane-btn pane-max', type: 'button', title: 'Maximise', 'aria-label': `Maximise ${this.name}`, text: '⤢' });
+      this.closeBtn = h('button', { class: 'pane-btn close', type: 'button', title: 'Remove from grid (session keeps running)', 'aria-label': `Remove ${this.name} from grid`, text: '×' });
+      this.headerEl = h('div', { class: 'pane-header' },
+        this.dotEl,
+        h('span', { class: 'pane-name', title: this.name, text: this.name }),
+        this.stateEl, this.maxBtn, this.closeBtn);
+      this.termHost = h('div', { class: 'pane-term' });
+      this.deadMsgEl = h('div', { text: 'Session no longer exists.' });
+      this.deadEl = h('div', { class: 'pane-dead', hidden: true },
+        this.deadMsgEl,
+        h('button', { class: 'btn-secondary', type: 'button', text: 'Remove from grid', onclick: () => this.hooks.onRemove(this) }));
+      this.el = h('section', { class: 'pane', 'aria-label': `Terminal ${this.name}` },
+        this.headerEl, h('div', { class: 'pane-body' }, this.termHost, this.deadEl));
+    }
+
+    _buildTerminal() {
+      const term = new window.Terminal({ ...TERM_OPTIONS, theme: { ...TERM_OPTIONS.theme } });
+      this.fitAddon = new window.FitAddon.FitAddon();
+      term.loadAddon(this.fitAddon);
+      term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
+
+      // OSC 52: tmux (set-clipboard) forwards copied text as "ESC ] 52 ; c ; <base64> BEL"
+      term.parser.registerOscHandler(52, data => {
+        const b64 = data.slice(data.indexOf(';') + 1);
+        if (!b64 || b64 === '?') return true; // ignore clipboard read requests
+        try {
+          const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+          copyToClipboard(new TextDecoder().decode(bytes));
+        } catch {}
+        return true;
+      });
+
+      term.onData(data => this.send({ type: 'input', data }));
+      term.onResize(({ cols, rows }) => this.send({ type: 'resize', cols, rows }));
+      this.term = term;
+      // term.open() is deferred until the host is visible with a real size (see fitNow),
+      // so tiles created hidden (mobile / maximised) measure correctly.
+    }
+
+    // All listeners are attached exactly once per pane.
+    _attachListeners() {
+      // Focus tracking: any pointer interaction or keyboard focus inside the tile.
+      this.el.addEventListener('pointerdown', () => this.hooks.onFocus(this));
+      this.el.addEventListener('focusin', () => this.hooks.onFocus(this));
+      this.headerEl.addEventListener('click', e => { if (!e.target.closest('button')) this.focus(); });
+      this.headerEl.addEventListener('dblclick', e => { if (!e.target.closest('button')) this.hooks.onToggleMax(this); });
+      this.maxBtn.addEventListener('click', () => this.hooks.onToggleMax(this));
+      this.closeBtn.addEventListener('click', () => this.hooks.onRemove(this));
+
+      // Suppress browser context menu so shell right-click menus work
+      this.termHost.addEventListener('contextmenu', e => e.preventDefault());
+
+      // Mobile touch gestures: vertical drag → wheel (tmux scroll), swipe right → End key
+      let startX = 0, startY = 0, lastY = 0;
+      this.termHost.addEventListener('touchstart', e => {
+        startX = e.touches[0].clientX;
+        startY = lastY = e.touches[0].clientY;
+      }, { passive: true });
+      this.termHost.addEventListener('touchmove', e => {
+        const y = e.touches[0].clientY;
+        const deltaY = lastY - y;
+        lastY = y;
+        if (Math.abs(deltaY) > 2 && this.term.element) {
+          this.term.element.dispatchEvent(new WheelEvent('wheel', { deltaY: deltaY * 3, bubbles: true, cancelable: true }));
+        }
+      }, { passive: true });
+      this.termHost.addEventListener('touchend', e => {
+        const dx = e.changedTouches[0].clientX - startX;
+        const dy = Math.abs(e.changedTouches[0].clientY - startY);
+        // Swipe right: >60px horizontal, <30px vertical drift → accept autosuggestion
+        if (dx > 60 && dy < 30 && this.send({ type: 'input', data: '\x1b[F' })) {
+          this.termHost.style.outline = '2px solid #3fb950';
+          setTimeout(() => { this.termHost.style.outline = ''; }, 200);
+        }
+      }, { passive: true });
+
+      this.resizeObserver = new ResizeObserver(() => this.requestFit());
+      this.resizeObserver.observe(this.termHost);
+    }
+
+    // --- Sizing ---
+    requestFit() {
+      if (this.disposed) return;
+      clearTimeout(this.fitTimer);
+      this.fitTimer = setTimeout(() => this.fitNow(), FIT_DEBOUNCE_MS);
+    }
+
+    fitNow() {
+      if (this.disposed) return;
+      if (!this.termHost.offsetWidth || !this.termHost.offsetHeight) return; // hidden / zero size
+      if (!this.opened) {
+        this.term.open(this.termHost);
+        this.opened = true;
+      }
+      try { this.fitAddon.fit(); } catch {}
+    }
+
+    // --- Connection ---
+    get isOpen() { return !!this.ws && this.ws.readyState === WebSocket.OPEN; }
+
+    send(msg) {
+      if (!this.isOpen) return false;
+      this.ws.send(JSON.stringify(msg));
+      return true;
+    }
+
+    connect() {
+      if (this.disposed || this.status === 'dead') return;
+      this._clearTimers();
+      this._closeSocket();
+      this._setStatus(this.everConnected ? 'reconnecting' : 'connecting');
+
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}&session=${encodeURIComponent(this.name)}&attach=1`);
+      this.ws = ws;
+
+      ws.onopen = () => {
+        if (ws !== this.ws) return;
+        this.everConnected = true;
+        this.reconnectDelay = RECONNECT_MIN_MS;
+        this._setStatus('connected');
+        this.send({ type: 'resize', cols: this.term.cols, rows: this.term.rows });
+        this.pingTimer = setInterval(() => this.send({ type: 'ping' }), PING_MS);
+      };
+
+      ws.onmessage = event => {
+        if (ws !== this.ws) return;
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'output') this.term.write(msg.data);
+        } catch {}
+      };
+
+      ws.onclose = event => {
+        if (ws !== this.ws || this.disposed) return;
+        this.ws = null;
+        this._clearTimers();
+        if (event.code === 4404) { this._markDead('Session no longer exists.'); return; }
+        if (event.code === 1008) {
+          this._markDead('Connection rejected.');
+          this.hooks.onRejected(this); // lets the app check whether the token expired
+          return;
+        }
+        this._scheduleReconnect();
+      };
+
+      ws.onerror = () => {};
+    }
+
+    /** Reconnect immediately if not connected (e.g. after the tab becomes visible). */
+    wake() {
+      if (this.disposed || this.status === 'dead') return;
+      if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+      this.reconnectDelay = RECONNECT_MIN_MS;
+      this.connect();
+    }
+
+    _scheduleReconnect() {
+      this._setStatus('reconnecting');
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        this.connect();
+      }, this.reconnectDelay);
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
+    }
+
+    _markDead(msg) {
+      this.deadMsgEl.textContent = msg;
+      this.deadEl.hidden = false;
+      this._setStatus('dead');
+    }
+
+    _setStatus(status) {
+      this.status = status;
+      this.dotEl.className = `dot ${status}`;
+      this.stateEl.className = `pane-state${status === 'dead' ? ' dead' : ''}`;
+      this.stateEl.textContent = status === 'connected' ? '' : status === 'dead' ? 'ended' : `${status}…`;
+      this.hooks.onStatus(this);
+    }
+
+    _clearTimers() {
+      clearInterval(this.pingTimer); this.pingTimer = null;
+      clearTimeout(this.reconnectTimer); this.reconnectTimer = null;
+    }
+
+    _closeSocket() {
+      if (!this.ws) return;
+      const ws = this.ws;
+      this.ws = null;
+      ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+      try { ws.close(); } catch {}
+    }
+
+    // --- UI state ---
+    focus() { if (this.opened) this.term.focus(); }
+
+    setFocused(on) {
+      this.el.classList.toggle('focused', on);
+      this.term.options.cursorBlink = on;
+    }
+
+    setMaximized(on) {
+      this.maxBtn.textContent = on ? '⤡' : '⤢';
+      this.maxBtn.title = on ? 'Restore grid' : 'Maximise';
+      this.maxBtn.setAttribute('aria-label', on ? 'Restore grid' : `Maximise ${this.name}`);
+    }
+
+    dispose() {
+      if (this.disposed) return;
+      this.disposed = true;
+      this._clearTimers();
+      clearTimeout(this.fitTimer);
+      this._closeSocket();
+      this.resizeObserver.disconnect();
+      this.term.dispose();
+      this.el.remove();
+    }
+  }
+
+  // ===================================================================
+  // App state
+  // ===================================================================
+  const state = { sessions: [], layout: 'auto', maximized: null };
+  const panes = new Map(); // name → Pane
+  let focusedName = null;
+  let mobileActive = null;
+
+  const gridEl = $('grid');
+  const maxStrip = $('max-strip');
+  const mobileTabs = $('mobile-tabs');
+  const layoutSelect = $('layout-select');
+  const connSummary = $('conn-summary');
+
+  const mobileQuery = window.matchMedia('(max-width: 768px), (pointer: coarse) and (max-width: 900px)');
+  const isMobile = () => mobileQuery.matches;
+
+  function activePane() {
+    const name = isMobile() ? mobileActive : focusedName;
+    return (name && panes.get(name)) || null;
+  }
+
+  const paneHooks = {
+    onStatus: () => updateIndicators(),
+    onFocus: pane => setFocused(pane.name),
+    onRemove: pane => removeSession(pane.name),
+    onToggleMax: pane => { if (!isMobile()) setMaximized(state.maximized === pane.name ? null : pane.name); },
+    onRejected: () => { api('GET', '/api/grid').catch(() => {}); }, // 401 → redirect home
+  };
+
+  function createPane(name) {
+    const pane = new Pane(name, paneHooks);
+    panes.set(name, pane);
+    return pane;
+  }
+
+  // ===================================================================
+  // Mutations (each persists)
+  // ===================================================================
+  function addSessions(names) {
+    const fresh = names.filter(n => !state.sessions.includes(n));
+    if (!fresh.length) return;
+    fresh.forEach(n => { state.sessions.push(n); createPane(n); });
+    mobileActive = fresh[0];
+    if (state.maximized) state.maximized = fresh[0];
+    setFocused(fresh[0], { focusTerm: !isMobile() });
+    render();
+    saveSoon();
+  }
+
+  function removeSession(name) {
+    const index = state.sessions.indexOf(name);
+    if (index === -1) return;
+    const wasMaximized = state.maximized === name;
+    state.sessions.splice(index, 1);
+    const pane = panes.get(name);
+    if (pane) pane.dispose(); // detaches only; the tmux session keeps running
+    panes.delete(name);
+
+    const neighbour = state.sessions[Math.min(index, state.sessions.length - 1)] || null;
+    if (wasMaximized) state.maximized = neighbour;
+    if (mobileActive === name) mobileActive = neighbour;
+    if (focusedName === name) { focusedName = null; if (neighbour) setFocused(neighbour); }
+    render();
+    saveSoon();
+
+    showNotice(`Removed "${name}" from grid`, {
+      actionLabel: 'Undo',
+      onAction: () => restoreSession(name, index, wasMaximized),
+    });
+  }
+
+  function restoreSession(name, index, wasMaximized) {
+    if (state.sessions.includes(name)) return;
+    state.sessions.splice(Math.min(index, state.sessions.length), 0, name);
+    createPane(name);
+    if (wasMaximized) state.maximized = name;
+    mobileActive = name;
+    setFocused(name);
+    render();
+    saveSoon();
+  }
+
+  function setLayout(layout) {
+    if (!LAYOUTS.includes(layout) || layout === state.layout) return;
+    state.layout = layout;
+    render();
+    saveSoon();
+  }
+
+  function setMaximized(name) {
+    state.maximized = name && panes.has(name) ? name : null;
+    if (state.maximized) setFocused(state.maximized, { focusTerm: true });
+    render();
+    saveSoon();
+  }
+
+  function setFocused(name, { focusTerm = false } = {}) {
+    if (focusedName !== name) {
+      const prev = focusedName && panes.get(focusedName);
+      if (prev) prev.setFocused(false);
+      focusedName = name;
+    }
+    const pane = name && panes.get(name);
+    if (pane) {
+      pane.setFocused(true);
+      if (focusTerm) setTimeout(() => pane.focus(), FIT_DEBOUNCE_MS + 20);
+    }
+  }
+
+  function showMobilePane(name) {
+    mobileActive = name;
+    setFocused(name);
+    render();
+  }
+
+  // ===================================================================
+  // Rendering
+  // ===================================================================
+  function gridTemplate(n) {
+    let cols, rows, minCol = '0px', minRow = '0px';
+    if (state.layout === 'columns') {
+      cols = n; rows = 1; minCol = '240px';
+    } else if (state.layout === 'rows') {
+      cols = 1; rows = n; minRow = '160px';
+    } else {
+      cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+      rows = Math.ceil(n / cols);
+      minRow = n > 9 ? '220px' : '120px';
+    }
+    return {
+      columns: `repeat(${cols}, minmax(${minCol}, 1fr))`,
+      rows: `repeat(${rows}, minmax(${minRow}, 1fr))`,
+    };
+  }
+
+  function render() {
+    const n = state.sessions.length;
+    const mobile = isMobile();
+    document.body.classList.toggle('mobile', mobile);
+    $('loading-state').hidden = true;
+    $('load-error-state').hidden = true;
+    $('empty-state').hidden = n > 0;
+    gridEl.hidden = n === 0;
+    layoutSelect.value = state.layout;
+
+    if (mobile && (!mobileActive || !panes.has(mobileActive))) mobileActive = focusedName && panes.has(focusedName) ? focusedName : state.sessions[0] || null;
+    const maxName = !mobile && state.maximized && panes.has(state.maximized) ? state.maximized : null;
+    const soloName = mobile ? mobileActive : maxName;
+
+    // DOM order follows state.sessions (only move nodes that are out of place)
+    state.sessions.forEach((name, i) => {
+      const el = panes.get(name).el;
+      if (gridEl.children[i] !== el) gridEl.insertBefore(el, gridEl.children[i] || null);
+    });
+
+    gridEl.classList.toggle('single', !!soloName);
+    if (!soloName && n > 0) {
+      const t = gridTemplate(n);
+      gridEl.style.gridTemplateColumns = t.columns;
+      gridEl.style.gridTemplateRows = t.rows;
+    }
+    for (const [name, pane] of panes) {
+      pane.el.hidden = !!soloName && name !== soloName;
+      pane.setMaximized(name === maxName);
+    }
+
+    renderMaxStrip(maxName);
+    renderMobileTabs(mobile && n > 0);
+    updateIndicators();
+  }
+
+  function chip(name, props) {
+    const pane = panes.get(name);
+    return h('button', { class: 'chip', type: 'button', 'data-name': name, title: name, ...props },
+      h('span', { class: `dot ${pane ? pane.status : ''}`, 'aria-hidden': 'true' }),
+      h('span', { class: 'label', text: name }));
+  }
+
+  function renderMaxStrip(maxName) {
+    maxStrip.hidden = !maxName;
+    maxStrip.replaceChildren();
+    if (!maxName) return;
+    for (const name of state.sessions) {
+      maxStrip.append(chip(name, {
+        'aria-current': name === maxName ? 'true' : 'false',
+        'aria-label': `Maximise ${name}`,
+        onclick: () => setMaximized(name),
+      }));
+    }
+    maxStrip.append(
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'btn-tool', type: 'button', title: 'Restore grid', 'aria-label': 'Restore grid', text: '⤡', onclick: () => setMaximized(null) }));
+  }
+
+  function renderMobileTabs(show) {
+    mobileTabs.hidden = !show;
+    mobileTabs.replaceChildren();
+    if (!show) return;
+    for (const name of state.sessions) {
+      mobileTabs.append(chip(name, {
+        role: 'tab',
+        'aria-selected': name === mobileActive ? 'true' : 'false',
+        onclick: () => showMobilePane(name),
+      }));
+    }
+    mobileTabs.append(h('button', { class: 'chip add', type: 'button', title: 'Add tmux sessions', 'aria-label': 'Add tmux sessions', text: '+', onclick: openPicker }));
+    const current = mobileTabs.querySelector('[aria-selected="true"]');
+    if (current) current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  // Cheap status refresh (no DOM rebuild): summary + dots in chips/tabs.
+  function updateIndicators() {
+    const total = panes.size;
+    let connected = 0;
+    for (const p of panes.values()) if (p.status === 'connected') connected++;
+    connSummary.textContent = `● ${connected}/${total}`;
+    connSummary.title = `${connected} of ${total} terminals connected`;
+    connSummary.className = 'conn-summary' + (total === 0 ? '' : connected === total ? ' all' : connected === 0 ? ' none' : ' some');
+    for (const strip of [maxStrip, mobileTabs]) {
+      for (const c of strip.querySelectorAll('[data-name]')) {
+        const p = panes.get(c.dataset.name);
+        if (p) c.querySelector('.dot').className = `dot ${p.status}`;
+      }
+    }
+  }
+
+  // ===================================================================
+  // Persistence
+  // ===================================================================
+  let saveTimer = null;
+
+  function snapshot() {
+    return { sessions: state.sessions.slice(), layout: state.layout, maximized: state.maximized };
+  }
+
+  function saveSoon() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS);
+  }
+
+  async function saveNow() {
+    saveTimer = null;
+    try {
+      const res = await api('PUT', '/api/grid', snapshot());
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      if (e.message === 'Unauthorized') return;
+      showNotice("Couldn't save grid layout", { error: true, actionLabel: 'Retry', onAction: saveNow });
+    }
+  }
+
+  // Flush a pending save when leaving the page.
+  window.addEventListener('pagehide', () => {
+    if (!saveTimer) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    try {
+      fetch('/api/grid', {
+        method: 'PUT', keepalive: true,
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot()),
+      });
+    } catch {}
+  });
+
+  async function loadGrid() {
+    $('loading-state').hidden = false;
+    $('load-error-state').hidden = true;
+    try {
+      const res = await api('GET', '/api/grid');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const sessions = Array.isArray(data.sessions)
+        ? [...new Set(data.sessions.filter(s => typeof s === 'string' && s))]
+        : [];
+      state.sessions = sessions;
+      state.layout = LAYOUTS.includes(data.layout) ? data.layout : 'auto';
+      state.maximized = sessions.includes(data.maximized) ? data.maximized : null;
+    } catch (e) {
+      if (e.message === 'Unauthorized') return;
+      $('loading-state').hidden = true;
+      $('load-error-state').hidden = false;
+      return;
+    }
+    initPanes();
+  }
+
+  function initPanes() {
+    state.sessions.forEach(createPane);
+    const first = state.maximized || state.sessions[0] || null;
+    mobileActive = first;
+    render();
+    if (first) setFocused(first, { focusTerm: !isMobile() });
+  }
+
+  // ===================================================================
+  // Add picker
+  // ===================================================================
+  const pickerModal = $('picker-modal');
+  const pickerList = $('picker-list');
+  const pickerFilter = $('picker-filter');
+  const pickerAddBtn = $('picker-add');
+  const picker = { status: 'idle', sessions: [], selected: new Set(), seq: 0 };
+
+  function openPicker() {
+    picker.selected.clear();
+    pickerFilter.value = '';
+    pickerModal.classList.add('active');
+    if (!isMobile()) setTimeout(() => pickerFilter.focus(), 50);
+    loadPickerSessions();
+  }
+
+  function closePicker() {
+    pickerModal.classList.remove('active');
+    picker.seq++; // ignore any in-flight response
+    const p = activePane();
+    if (p && !isMobile()) p.focus();
+  }
+
+  async function loadPickerSessions() {
+    const seq = ++picker.seq;
+    picker.status = 'loading';
+    renderPicker();
+    try {
+      const res = await api('GET', '/api/tmux/sessions');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (seq !== picker.seq) return;
+      picker.sessions = Array.isArray(data) ? data : [];
+      picker.status = 'ready';
+    } catch (e) {
+      if (seq !== picker.seq || e.message === 'Unauthorized') return;
+      picker.status = 'error';
+    }
+    renderPicker();
+  }
+
+  function pickerMessage(children, error = false) {
+    return h('div', { class: `picker-msg${error ? ' error' : ''}` }, children);
+  }
+
+  function pickerRow(s) {
+    const checked = picker.selected.has(s.name);
+    const meta = [
+      s.project ? s.project.name : null,
+      `${s.windows} window${s.windows === 1 ? '' : 's'}`,
+      shortPath(s.path),
+      relTime(s.activity),
+    ].filter(Boolean).join(' · ');
+    const row = h('label', { class: `picker-row${checked ? ' checked' : ''}`, title: s.path || s.name },
+      h('input', {
+        type: 'checkbox', checked, 'aria-label': `Select ${s.name}`,
+        onchange: e => {
+          if (e.target.checked) picker.selected.add(s.name); else picker.selected.delete(s.name);
+          row.classList.toggle('checked', e.target.checked);
+          updatePickerButton();
+        },
+      }),
+      h('div', { class: 'picker-info' },
+        h('div', { class: 'picker-name' },
+          h('span', { class: 'n', text: s.name }),
+          s.attached > 0 ? h('span', { class: 'badge', title: `${s.attached} client(s) attached`, text: 'attached' }) : null),
+        h('div', { class: 'picker-meta', text: meta })));
+    return row;
+  }
+
+  function renderPicker() {
+    pickerList.replaceChildren();
+    pickerFilter.hidden = picker.status !== 'ready';
+
+    if (picker.status === 'loading') {
+      pickerList.append(pickerMessage([h('div', { class: 'spinner', 'aria-hidden': 'true' }), 'Loading sessions…']));
+    } else if (picker.status === 'error') {
+      pickerList.append(pickerMessage([
+        "Couldn't list sessions",
+        h('button', { class: 'btn btn-secondary', type: 'button', text: 'Retry', onclick: loadPickerSessions }),
+      ], true));
+    } else if (picker.status === 'ready') {
+      const all = picker.sessions;
+      const inGrid = all.filter(s => state.sessions.includes(s.name));
+      const available = all.filter(s => !state.sessions.includes(s.name));
+      // Drop selections for sessions that disappeared or got added meanwhile
+      for (const name of [...picker.selected]) if (!available.some(s => s.name === name)) picker.selected.delete(name);
+
+      if (all.length === 0) {
+        pickerFilter.hidden = true;
+        pickerList.append(pickerMessage([
+          'No tmux sessions running.',
+          h('span', {}, 'Start one with ', h('code', { text: 'tmux new -s name' }), ' or from Projects.'),
+        ]));
+      } else if (available.length === 0) {
+        pickerFilter.hidden = true;
+        pickerList.append(pickerMessage('All running tmux sessions are already in your grid.'));
+      } else {
+        const q = pickerFilter.value.trim().toLowerCase();
+        const matches = s => !q || [s.name, s.path, s.project && s.project.name].some(v => v && String(v).toLowerCase().includes(q));
+        const shown = available.filter(matches);
+        const groups = [
+          ['Webshell projects', shown.filter(s => s.project)],
+          ['Other tmux sessions', shown.filter(s => !s.project)],
+        ];
+        if (shown.length === 0) {
+          pickerList.append(pickerMessage(`No sessions match "${pickerFilter.value.trim()}".`));
+        }
+        for (const [title, items] of groups) {
+          if (!items.length) continue;
+          pickerList.append(h('div', { class: 'picker-group', text: title }), ...items.map(s => pickerRow(s)));
+        }
+      }
+      if (inGrid.length && available.length) {
+        pickerList.append(h('div', { class: 'picker-note', text: `Already in grid (hidden): ${inGrid.map(s => s.name).join(', ')}` }));
+      }
+    }
+    updatePickerButton();
+  }
+
+  function updatePickerButton() {
+    const n = picker.selected.size;
+    pickerAddBtn.textContent = `Add ${n}`;
+    pickerAddBtn.disabled = n === 0;
+  }
+
+  function confirmPicker() {
+    if (!picker.selected.size) return;
+    // Keep the server's ordering (most recent activity first)
+    const names = picker.sessions.map(s => s.name).filter(n => picker.selected.has(n));
+    closePicker();
+    addSessions(names);
+  }
+
+  pickerFilter.addEventListener('input', renderPicker);
+  pickerFilter.addEventListener('keydown', e => { if (e.key === 'Enter') confirmPicker(); });
+  pickerAddBtn.addEventListener('click', confirmPicker);
+  $('picker-cancel').addEventListener('click', closePicker);
+  pickerModal.addEventListener('click', e => { if (e.target === pickerModal) closePicker(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && pickerModal.classList.contains('active')) { e.preventDefault(); closePicker(); }
+  });
+  pickerFilter.addEventListener('focus', () => {
+    setTimeout(() => pickerFilter.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+  });
+
+  // ===================================================================
+  // Global wiring
+  // ===================================================================
+  $('back-btn').addEventListener('click', goHome);
+  $('add-btn').addEventListener('click', openPicker);
+  $('empty-add-btn').addEventListener('click', openPicker);
+  $('load-retry-btn').addEventListener('click', loadGrid);
+  layoutSelect.addEventListener('change', () => setLayout(layoutSelect.value));
+
+  // Paste into the visible / focused pane
+  $('paste-btn').addEventListener('click', async () => {
+    const pane = activePane();
+    if (!pane) return;
+    let text = null;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      text = prompt('Paste text:'); // clipboard API denied
+    }
+    if (text) pane.send({ type: 'input', data: text });
+    pane.focus();
+  });
+
+  if (mobileQuery.addEventListener) mobileQuery.addEventListener('change', render);
+  else mobileQuery.addListener(render);
+
+  // Reconnect on mobile wake-up / tab return
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    for (const p of panes.values()) p.wake();
+  });
+
+  // Mobile keyboard viewport fix
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      const keyboardHeight = window.innerHeight - window.visualViewport.height;
+      document.body.style.height = keyboardHeight > 50 ? window.visualViewport.height + 'px' : '100%';
+      for (const p of panes.values()) if (!p.el.hidden) p.requestFit();
+    });
+  }
+
+  loadGrid();
+})();
+</script>
+</body>
+</html>

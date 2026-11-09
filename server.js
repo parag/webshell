@@ -3,7 +3,7 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 const crypto = require('crypto');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -65,6 +65,15 @@ function isSetupDone() {
   return getPasswordHash() !== null;
 }
 
+function getSetting(key) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+function setSetting(key, value) {
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+}
+
 // --- Telegram ---
 
 function getTelegramConfig() {
@@ -118,6 +127,10 @@ const tokens = {
 };
 
 app.use(express.json());
+// Grid view: /grid -> public/grid.html (/grid.html is served by express.static)
+app.get('/grid', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'grid.html'));
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Auth ---
@@ -267,6 +280,103 @@ function killTmuxSession(tmuxName) {
     // session may already be dead
   }
 }
+
+// Exact-match session existence check (no shell, never creates)
+function tmuxHasSession(name) {
+  try {
+    execFileSync('tmux', ['has-session', '-t', '=' + name], { timeout: 5000, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// --- Tmux sessions API (all sessions on the tmux server) ---
+
+app.get('/api/tmux/sessions', authMiddleware, (req, res) => {
+  let output;
+  try {
+    output = execFileSync('tmux', [
+      'list-sessions', '-F',
+      '#{session_name}\t#{session_attached}\t#{session_windows}\t#{session_activity}\t#{pane_current_path}',
+    ], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    const stderr = String(e.stderr || '');
+    // No tmux server running / no sessions -> empty list
+    if (/no server running|no sessions|error connecting to|No such file or directory/i.test(stderr)) {
+      return res.json([]);
+    }
+    return res.status(500).json({ error: (stderr.trim() || e.message || 'tmux failed') });
+  }
+  try {
+    const projRows = db.prepare(`
+      SELECT s.tmux_name, p.id, p.name
+      FROM sessions s JOIN projects p ON p.id = s.project_id
+    `).all();
+    const projByTmux = new Map(projRows.map(r => [r.tmux_name, { id: r.id, name: r.name }]));
+    const list = output.split('\n').filter(Boolean).map(line => {
+      const [name, attached, windows, activity, ...rest] = line.split('\t');
+      return {
+        name,
+        attached: parseInt(attached, 10) || 0,
+        windows: parseInt(windows, 10) || 0,
+        activity: parseInt(activity, 10) || 0,
+        path: rest.join('\t'),
+        project: projByTmux.get(name) || null,
+      };
+    });
+    list.sort((a, b) => b.activity - a.activity);
+    res.json(list);
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Failed to list sessions' });
+  }
+});
+
+// --- Grid layout API (stored in settings under key 'grid') ---
+
+const GRID_DEFAULT = () => ({ sessions: [], layout: 'auto', maximized: null });
+const GRID_LAYOUTS = ['auto', 'columns', 'rows'];
+const GRID_NAME_RE = /^[A-Za-z0-9_-]{1,100}$/;
+
+function validateGrid(g) {
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return 'Body must be an object.';
+  const { sessions, layout, maximized } = g;
+  if (!Array.isArray(sessions)) return 'sessions must be an array.';
+  if (sessions.length > 50) return 'At most 50 sessions.';
+  for (const n of sessions) {
+    if (typeof n !== 'string' || !GRID_NAME_RE.test(n)) return 'Invalid session name.';
+  }
+  if (new Set(sessions).size !== sessions.length) return 'Duplicate session names.';
+  if (!GRID_LAYOUTS.includes(layout)) return 'layout must be one of auto, columns, rows.';
+  if (maximized !== null && maximized !== undefined && !sessions.includes(maximized)) {
+    return 'maximized must be null or one of sessions.';
+  }
+  return null;
+}
+
+function getGrid() {
+  const raw = getSetting('grid');
+  if (!raw) return GRID_DEFAULT();
+  try {
+    const g = JSON.parse(raw);
+    if (validateGrid(g)) return GRID_DEFAULT();
+    return { sessions: g.sessions, layout: g.layout, maximized: g.maximized ?? null };
+  } catch {
+    return GRID_DEFAULT();
+  }
+}
+
+app.get('/api/grid', authMiddleware, (req, res) => {
+  res.json(getGrid());
+});
+
+app.put('/api/grid', authMiddleware, (req, res) => {
+  const err = validateGrid(req.body);
+  if (err) return res.status(400).json({ error: err });
+  const g = { sessions: req.body.sessions, layout: req.body.layout, maximized: req.body.maximized ?? null };
+  setSetting('grid', JSON.stringify(g));
+  res.json(g);
+});
 
 // --- Projects API ---
 
@@ -524,29 +634,10 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, 'http://localhost');
-  const tmuxName = url.searchParams.get('session');
-
-  // Validate: tmux_name format is "project--session", allow double dash
-  if (!tmuxName || !/^[a-zA-Z0-9_-]{1,50}--[a-zA-Z0-9_-]{1,50}$/.test(tmuxName)) {
-    ws.close(1008, 'Invalid session');
-    return;
-  }
-
-  // Ensure tmux session exists
-  try {
-    execSync(`tmux has-session -t '${tmuxName}'`, { timeout: 5000 });
-  } catch {
-    try {
-      execSync(`tmux new-session -d -s '${tmuxName}' -c '${HOME_DIR}'`, { timeout: 5000 });
-    } catch {
-      ws.close(1011, 'Failed to create session');
-      return;
-    }
-  }
-
-  const term = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
+// Spawn a pty attached to a tmux target and wire it to the WebSocket.
+// onExit is called when the pty exits (defaults to closing the WS normally).
+function bridgePty(ws, target, onExit) {
+  const term = pty.spawn('tmux', ['attach-session', '-t', target], {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,
@@ -583,8 +674,52 @@ wss.on('connection', (ws, req) => {
   ws.on('close', cleanup);
   ws.on('error', cleanup);
   term.onExit(() => {
+    if (onExit) return onExit();
     if (ws.readyState === 1) ws.close();
   });
+}
+
+wss.on('connection', (ws, req) => {
+  const url = new URL(req.url, 'http://localhost');
+  const tmuxName = url.searchParams.get('session');
+
+  // Attach-only mode: attach to an existing tmux session by exact name, never create
+  if (url.searchParams.get('attach') === '1') {
+    if (!tmuxName || !/^[A-Za-z0-9_-]{1,100}$/.test(tmuxName)) {
+      ws.close(1008, 'Invalid session');
+      return;
+    }
+    if (!tmuxHasSession(tmuxName)) {
+      ws.close(4404, 'session not found');
+      return;
+    }
+    bridgePty(ws, '=' + tmuxName, () => {
+      if (ws.readyState !== 1) return;
+      if (!tmuxHasSession(tmuxName)) ws.close(4404, 'session ended');
+      else ws.close();
+    });
+    return;
+  }
+
+  // Validate: tmux_name format is "project--session", allow double dash
+  if (!tmuxName || !/^[a-zA-Z0-9_-]{1,50}--[a-zA-Z0-9_-]{1,50}$/.test(tmuxName)) {
+    ws.close(1008, 'Invalid session');
+    return;
+  }
+
+  // Ensure tmux session exists
+  try {
+    execSync(`tmux has-session -t '${tmuxName}'`, { timeout: 5000 });
+  } catch {
+    try {
+      execSync(`tmux new-session -d -s '${tmuxName}' -c '${HOME_DIR}'`, { timeout: 5000 });
+    } catch {
+      ws.close(1011, 'Failed to create session');
+      return;
+    }
+  }
+
+  bridgePty(ws, tmuxName);
 });
 
 server.listen(PORT, '127.0.0.1', () => {

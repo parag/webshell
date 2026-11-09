@@ -303,6 +303,7 @@
   </div>
   <div class="sidebar-content" id="sidebar-content"></div>
   <div class="sidebar-footer">
+    <button class="sidebar-footer-btn" id="sidebar-grid" title="Open terminal grid" onclick="location.href='/grid'">&#9638; Grid</button>
     <button class="sidebar-footer-btn" id="sidebar-settings">&#9881; Settings</button>
   </div>
 </div>
@@ -335,6 +336,7 @@
       <h1>Projects</h1>
     </div>
     <div class="view-header-right">
+      <button class="btn-new" id="grid-btn" style="background:#21262d;font-size:13px;padding:8px 14px;margin-right:6px" title="Open terminal grid" onclick="location.href='/grid'">&#9638; Grid</button>
       <button class="btn-new" id="new-project-btn">+ New</button>
     </div>
   </div>
@@ -475,6 +477,8 @@
     </div>
   </div>
 </div>
+
+<div id="copy-toast" style="display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1f6feb;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;z-index:10000;box-shadow:0 4px 12px rgba(0,0,0,.4);"></div>
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -1045,6 +1049,46 @@
     ws.onerror = () => {};
   }
 
+  function execCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    ta.remove();
+    if (currentTerm) currentTerm.focus();
+    return ok;
+  }
+
+  // Browsers may reject clipboard writes without a user gesture (Safari, plain HTTP),
+  // so fall back to a toast the user taps to complete the copy.
+  function copyToClipboard(text) {
+    const toast = document.getElementById('copy-toast');
+    const show = (msg, clickable) => {
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      toast.style.cursor = clickable ? 'pointer' : 'default';
+      toast.onclick = clickable ? () => {
+        const done = () => show('Copied to clipboard', false);
+        if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => { if (execCopy(text)) done(); });
+        else if (execCopy(text)) done();
+      } : null;
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => { toast.style.display = 'none'; }, clickable ? 8000 : 1500);
+    };
+    const fallback = () => {
+      if (execCopy(text)) show('Copied to clipboard', false);
+      else show('Tap to copy selection to clipboard', true);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => show('Copied to clipboard', false), fallback);
+    } else {
+      fallback();
+    }
+  }
+
   function connectToSession(tmuxName) {
     currentTmuxName = tmuxName;
     terminalTitle.innerHTML = `<span class="breadcrumb-project">${currentProject.name}</span> / ${currentSessionName}`;
@@ -1079,6 +1123,17 @@
     term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
     term.open(terminalContainer);
     setTimeout(() => { fitAddon.fit(); }, 50);
+
+    // OSC 52: tmux (set-clipboard) forwards copied text as "ESC ] 52 ; c ; <base64> BEL"
+    term.parser.registerOscHandler(52, data => {
+      const b64 = data.slice(data.indexOf(';') + 1);
+      if (!b64 || b64 === '?') return true; // ignore clipboard read requests
+      try {
+        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        copyToClipboard(new TextDecoder().decode(bytes));
+      } catch {}
+      return true;
+    });
     currentTerm = term;
 
     term.onData(data => {
