@@ -91,6 +91,43 @@
     font-size: 12px; color: #8b949e; background: #21262d; padding: 2px 8px;
     border-radius: 10px; margin-left: 8px;
   }
+  /* Accordion: project card + its inline session list */
+  .project-group { margin-bottom: 10px; }
+  .project-group > .card { margin-bottom: 0; }
+  .project-group.expanded > .card {
+    border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-color: #30363d;
+  }
+  .project-group.expanded > .card:hover { border-color: #58a6ff; }
+  .project-chevron {
+    flex-shrink: 0; width: 20px; margin-right: 10px; margin-left: -4px;
+    color: #8b949e; font-size: 14px; text-align: center;
+  }
+  .project-sessions {
+    display: none; background: #0d1117; border: 1px solid #30363d; border-top: none;
+    border-radius: 0 0 10px 10px; padding: 6px 8px 10px;
+  }
+  .project-group.expanded > .project-sessions { display: block; }
+  .session-row {
+    display: flex; align-items: center; min-height: 52px; padding: 4px 0 4px 12px;
+    border-radius: 8px; cursor: pointer; touch-action: manipulation;
+    border-bottom: 1px solid #161b22;
+  }
+  .session-row:hover { background: #161b22; }
+  .session-row:active { background: #1c2129; }
+  .session-row .card-info { min-width: 0; }
+  .session-row .card-info h3 { font-size: 15px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session-row .card-info p { font-size: 12px; }
+  .project-sessions-msg { padding: 14px 12px 6px; color: #8b949e; font-size: 14px; }
+  .project-sessions-msg.error { color: #f85149; }
+  .project-sessions-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 4px 0; }
+  .btn-inline {
+    background: #21262d; color: #e6edf3; border: none; border-radius: 8px;
+    font-size: 13px; font-weight: 600; padding: 8px 14px; min-height: 40px;
+    cursor: pointer; touch-action: manipulation;
+  }
+  .btn-inline:hover { background: #30363d; }
+  .btn-inline.primary { background: #238636; color: #fff; }
+  .btn-inline.primary:hover { background: #2ea043; }
 
   /* --- Sessions View --- */
   #sessions-view { display: none; height: 100%; flex-direction: column; }
@@ -519,6 +556,16 @@
   // --- Views ---
   const allViews = ['setup', 'login', 'projects', 'sessions', 'terminal', 'files', 'fileview'];
   function showView(name) {
+    // The sessions list now lives inline on the projects (home) view. Anything
+    // that still routes to 'sessions' lands on home with that project expanded.
+    if (name === 'sessions') {
+      if (currentProject) setProjectExpanded(currentProject.id, true);
+      name = 'projects';
+    }
+    const projectsViewEl = document.getElementById('projects-view');
+    if (projectsViewEl.style.display === 'flex' && name !== 'projects') {
+      projectsScrollTop = document.getElementById('projects-list').scrollTop;
+    }
     allViews.forEach(v => {
       document.getElementById(v + '-view').style.display = 'none';
     });
@@ -807,30 +854,180 @@
 
   // --- Projects ---
   const projectsList = document.getElementById('projects-list');
+  const EXPANDED_KEY = 'webshell.expandedProjects';
+  let projectsScrollTop = 0;
+  let loadProjectsSeq = 0;
+  const sessionsCache = {};   // projectId -> { state: 'loading'|'error'|'ok', sessions: [] }
+  const sessionsSeq = {};     // projectId -> latest request number (drop stale responses)
+
+  // Per-browser convenience: which project cards are expanded.
+  const expandedProjects = (() => {
+    try {
+      const arr = JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]');
+      return new Set(Array.isArray(arr) ? arr.map(String) : []);
+    } catch { return new Set(); }
+  })();
+  function saveExpanded() {
+    try { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expandedProjects])); } catch {}
+  }
+  function setProjectExpanded(id, on) {
+    id = String(id);
+    if (on) expandedProjects.add(id); else expandedProjects.delete(id);
+    saveExpanded();
+  }
+
+  function escAttr(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function goHome(projectId) {
+    if (projectId != null) setProjectExpanded(projectId, true);
+    showView('projects');
+  }
 
   async function loadProjects() {
+    const seq = ++loadProjectsSeq;
     try {
       const projects = await apiJson('GET', '/api/projects');
+      if (seq !== loadProjectsSeq) return;
       if (projects.length === 0) {
         projectsList.innerHTML = '<div class="list-empty"><span>&#9776;</span>No projects yet.<br>Tap "+ New" to create one.</div>';
         return;
       }
+      // Forget expanded ids for projects that no longer exist
+      const ids = new Set(projects.map(p => String(p.id)));
+      let pruned = false;
+      for (const id of [...expandedProjects]) if (!ids.has(id)) { expandedProjects.delete(id); pruned = true; }
+      if (pruned) saveExpanded();
+
       projectsList.innerHTML = projects.map(p => {
+        const id = String(p.id);
         const date = new Date(p.created_at * 1000);
         const timeStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
         const dirDisplay = p.directory ? p.directory.replace(/^\/home\/[^/]+/, '~') : '~ (home)';
+        const open = expandedProjects.has(id);
         return `
-          <div class="card" data-project-id="${p.id}" data-project-name="${p.name}" data-project-dir="${p.directory || ''}">
-            <div class="card-info">
-              <h3>${p.name}<span class="project-badge">${p.session_count} session${p.session_count !== 1 ? 's' : ''}</span></h3>
-              <p>${dirDisplay} &middot; ${timeStr}</p>
+          <div class="project-group${open ? ' expanded' : ''}" data-group-id="${escAttr(id)}">
+            <div class="card" data-project-id="${escAttr(id)}" data-project-name="${escAttr(p.name)}" data-project-dir="${escAttr(p.directory || '')}" role="button" tabindex="0" aria-expanded="${open}">
+              <span class="project-chevron">${open ? '&#9662;' : '&#9656;'}</span>
+              <div class="card-info">
+                <h3>${escAttr(p.name)}<span class="project-badge">${p.session_count} session${p.session_count !== 1 ? 's' : ''}</span></h3>
+                <p>${escAttr(dirDisplay)} &middot; ${timeStr}</p>
+              </div>
+              <button class="project-edit-btn" data-edit-project="${escAttr(id)}" data-edit-dir="${escAttr(p.directory || '')}" title="Edit">&#9881;</button>
+              <button class="card-delete" data-delete-project="${escAttr(id)}" data-sessions="${p.session_count}" title="Delete">&times;</button>
             </div>
-            <button class="project-edit-btn" data-edit-project="${p.id}" data-edit-dir="${p.directory || ''}" title="Edit">&#9881;</button>
-            <button class="card-delete" data-delete-project="${p.id}" data-sessions="${p.session_count}" title="Delete">&times;</button>
+            <div class="project-sessions" data-sessions-for="${escAttr(id)}"></div>
           </div>`;
       }).join('');
+
+      // Paint cached lists right away (stable height, no flicker), then refresh.
+      for (const id of expandedProjects) {
+        renderProjectSessions(id);
+        loadProjectSessions(id);
+      }
+      projectsList.scrollTop = projectsScrollTop;
     } catch {}
   }
+
+  function renderProjectSessions(projectId) {
+    const panel = projectsList.querySelector(`[data-sessions-for="${CSS.escape(projectId)}"]`);
+    if (!panel) return;
+    const pid = escAttr(projectId);
+    const entry = sessionsCache[projectId];
+    const actions = `
+      <div class="project-sessions-actions">
+        <button class="btn-inline primary" data-new-session="${pid}">+ New session</button>
+        <button class="btn-inline" data-files-project="${pid}">Files</button>
+      </div>`;
+    if (!entry || (entry.state === 'loading' && !entry.sessions)) {
+      panel.innerHTML = '<div class="project-sessions-msg">Loading&hellip;</div>';
+      return;
+    }
+    if (entry.state === 'error' && !entry.sessions) {
+      panel.innerHTML = `<div class="project-sessions-msg error">Couldn't load sessions.</div>
+        <div class="project-sessions-actions"><button class="btn-inline" data-retry-sessions="${pid}">Retry</button></div>`;
+      return;
+    }
+    const sessions = entry.sessions;
+    if (sessions.length === 0) {
+      panel.innerHTML = '<div class="project-sessions-msg">No sessions yet</div>' + actions;
+      return;
+    }
+    panel.innerHTML = sessions.map(s => {
+      const date = new Date(s.created_at * 1000);
+      const timeStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      const status = !s.alive ? 'dead' : s.attached ? 'attached' : 'detached';
+      return `
+        <div class="session-row" data-tmux="${escAttr(s.tmux_name)}" data-session-name="${escAttr(s.name)}" data-session-project="${pid}" role="button" tabindex="0">
+          <div class="session-status ${status}"></div>
+          <div class="card-info">
+            <h3>${escAttr(s.name)}</h3>
+            <p>${status} &middot; ${timeStr}</p>
+          </div>
+          <button class="card-delete" data-delete-session="${escAttr(s.id)}" data-session-project="${pid}" title="Delete">&times;</button>
+        </div>`;
+    }).join('') + (entry.state === 'error'
+      ? `<div class="project-sessions-msg error">Couldn't refresh sessions. <button class="btn-inline" data-retry-sessions="${pid}">Retry</button></div>`
+      : '') + actions;
+  }
+
+  function updateProjectBadge(projectId, count) {
+    const card = projectsList.querySelector(`.card[data-project-id="${CSS.escape(projectId)}"]`);
+    if (!card) return;
+    const badge = card.querySelector('.project-badge');
+    if (badge) badge.textContent = `${count} session${count !== 1 ? 's' : ''}`;
+    const del = card.querySelector('[data-delete-project]');
+    if (del) del.dataset.sessions = count;
+  }
+
+  async function loadProjectSessions(projectId) {
+    projectId = String(projectId);
+    const seq = (sessionsSeq[projectId] || 0) + 1;
+    sessionsSeq[projectId] = seq;
+    const prev = sessionsCache[projectId];
+    sessionsCache[projectId] = { state: 'loading', sessions: prev && prev.sessions };
+    if (!prev || !prev.sessions) renderProjectSessions(projectId);
+    try {
+      const res = await api('GET', `/api/projects/${encodeURIComponent(projectId)}/sessions`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const sessions = await res.json();
+      if (!Array.isArray(sessions)) throw new Error('Bad response');
+      if (sessionsSeq[projectId] !== seq) return;
+      sessionsCache[projectId] = { state: 'ok', sessions };
+      updateProjectBadge(projectId, sessions.length);
+    } catch {
+      if (sessionsSeq[projectId] !== seq) return;
+      sessionsCache[projectId] = { state: 'error', sessions: prev && prev.sessions };
+    }
+    renderProjectSessions(projectId);
+  }
+
+  function toggleProject(card) {
+    const id = card.dataset.projectId;
+    const group = card.closest('.project-group');
+    const open = !group.classList.contains('expanded');
+    group.classList.toggle('expanded', open);
+    card.setAttribute('aria-expanded', String(open));
+    card.querySelector('.project-chevron').innerHTML = open ? '&#9662;' : '&#9656;';
+    setProjectExpanded(id, open);
+    if (open) { renderProjectSessions(id); loadProjectSessions(id); }
+  }
+
+  function projectFromId(id) {
+    const card = projectsList.querySelector(`.card[data-project-id="${CSS.escape(String(id))}"]`);
+    return card ? { id: card.dataset.projectId, name: card.dataset.projectName, dir: card.dataset.projectDir } : null;
+  }
+
+  projectsList.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (e.target.closest('button')) return;
+    const row = e.target.closest('.session-row[data-tmux]');
+    const card = e.target.closest('.card[data-project-id]');
+    if (row || card) { e.preventDefault(); e.target.click(); }
+  });
 
   projectsList.addEventListener('click', async e => {
     const editBtn = e.target.closest('[data-edit-project]');
@@ -855,16 +1052,60 @@
         : 'Delete this empty project?';
       if (confirm(msg)) {
         try { await apiJson('DELETE', `/api/projects/${id}`); } catch {}
+        setProjectExpanded(id, false);
+        delete sessionsCache[id];
         loadProjects();
       }
       return;
     }
-    const card = e.target.closest('.card[data-project-id]');
-    if (card) {
-      currentProject = { id: card.dataset.projectId, name: card.dataset.projectName };
-      document.getElementById('sessions-project-name').textContent = currentProject.name;
-      showView('sessions');
+    const newBtn = e.target.closest('[data-new-session]');
+    if (newBtn) {
+      e.stopPropagation();
+      const p = projectFromId(newBtn.dataset.newSession);
+      if (!p) return;
+      currentProject = { id: p.id, name: p.name };
+      openNewSessionModal();
+      return;
     }
+    const filesBtn = e.target.closest('[data-files-project]');
+    if (filesBtn) {
+      e.stopPropagation();
+      const p = projectFromId(filesBtn.dataset.filesProject);
+      if (!p) return;
+      currentProject = { id: p.id, name: p.name };
+      currentFilesBaseDir = p.dir || null;
+      loadFiles(p.dir || null);
+      return;
+    }
+    const retryBtn = e.target.closest('[data-retry-sessions]');
+    if (retryBtn) {
+      e.stopPropagation();
+      loadProjectSessions(retryBtn.dataset.retrySessions);
+      return;
+    }
+    const delSession = e.target.closest('[data-delete-session]');
+    if (delSession) {
+      e.stopPropagation();
+      const id = delSession.dataset.deleteSession;
+      const pid = delSession.dataset.sessionProject;
+      if (confirm('Delete this session?')) {
+        try { await apiJson('DELETE', `/api/sessions/${id}`); } catch {}
+        loadProjectSessions(pid);
+      }
+      return;
+    }
+    const row = e.target.closest('.session-row[data-tmux]');
+    if (row) {
+      const p = projectFromId(row.dataset.sessionProject);
+      if (!p) return;
+      currentProject = { id: p.id, name: p.name };
+      currentSessionName = row.dataset.sessionName;
+      connectToSession(row.dataset.tmux);
+      return;
+    }
+    if (e.target.closest('button')) return;
+    const card = e.target.closest('.card[data-project-id]');
+    if (card) toggleProject(card);
   });
 
   // New project modal
@@ -973,11 +1214,12 @@
   // New session modal
   const sessionModal = document.getElementById('session-modal');
   const sessionNameInput = document.getElementById('session-name-input');
-  document.getElementById('new-session-btn').addEventListener('click', () => {
+  function openNewSessionModal() {
     sessionNameInput.value = '';
     sessionModal.classList.add('active');
     setTimeout(() => sessionNameInput.focus(), 100);
-  });
+  }
+  document.getElementById('new-session-btn').addEventListener('click', openNewSessionModal);
   document.getElementById('session-modal-cancel').addEventListener('click', () => sessionModal.classList.remove('active'));
   sessionModal.addEventListener('click', e => { if (e.target === sessionModal) sessionModal.classList.remove('active'); });
 
@@ -1215,7 +1457,7 @@
     if (currentTerm) { currentTerm.dispose(); currentTerm = null; }
     terminalContainer.innerHTML = '';
     currentSessionName = null;
-    showView('sessions');
+    goHome(currentProject && currentProject.id);
   });
 
   window.addEventListener('popstate', () => {
@@ -1276,7 +1518,7 @@
   });
 
   document.getElementById('files-back-btn').addEventListener('click', () => {
-    showView('sessions');
+    goHome(currentProject && currentProject.id);
   });
 
   async function loadFiles(dir) {
