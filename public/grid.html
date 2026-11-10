@@ -99,8 +99,16 @@
     background: #161b22; border-bottom: 1px solid #21262d; flex-shrink: 0;
     user-select: none; cursor: default; min-height: 32px;
   }
-  .pane-name { flex: 1; min-width: 0; font-size: 13px; color: #8b949e; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pane.focused .pane-name { color: #e6edf3; }
+  .pane-name { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; white-space: nowrap; }
+  .pane-nick { min-width: 0; font-size: 13px; color: #8b949e; font-weight: 500; overflow: hidden; text-overflow: ellipsis; cursor: text; }
+  .pane.focused .pane-nick { color: #e6edf3; }
+  .pane-tmux { min-width: 0; max-width: 45%; flex-shrink: 1; font-size: 11px; color: #6e7681; font-family: 'Menlo', 'DejaVu Sans Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; }
+  .pane-rename-input {
+    flex: 1; min-width: 0; font-size: 13px; font-weight: 500; font-family: inherit;
+    background: #0d1117; color: #e6edf3; border: 1px solid #58a6ff; border-radius: 4px;
+    padding: 2px 6px; height: 24px; outline: none;
+  }
+  .pane-rename-input::placeholder { color: #6e7681; }
   .pane-state { font-size: 11px; color: #d29922; white-space: nowrap; }
   .pane-state.dead { color: #f85149; }
   .pane-btn {
@@ -110,6 +118,7 @@
   }
   .pane-btn:hover { color: #e6edf3; background: #21262d; }
   .pane-btn.close:hover { color: #f85149; }
+  .pane-btn.pane-rename { font-size: 14px; }
   .pane-body { flex: 1; min-height: 0; position: relative; }
   .pane-term { position: absolute; inset: 2px 0 0 4px; overflow: hidden; touch-action: none; }
   .pane-dead {
@@ -287,6 +296,7 @@
   const RECONNECT_MIN_MS = 1000;
   const RECONNECT_MAX_MS = 30000;
   const UNDO_MS = 5000;
+  const LABEL_MAX = 60;
 
   const TERM_OPTIONS = {
     cursorBlink: false,
@@ -323,6 +333,12 @@
     for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
     return el;
   }
+
+  // Grid-only nickname helpers. Labels never rename the tmux session.
+  function cleanLabel(v) {
+    return typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, LABEL_MAX) : '';
+  }
+  function paneTooltip(name, label) { return label ? `${label} → tmux: ${name}` : name; }
 
   function relTime(unixSeconds) {
     if (!unixSeconds) return '';
@@ -434,11 +450,16 @@
   class Pane {
     /**
      * @param {string} name tmux session name
-     * @param {object} hooks { onStatus, onFocus, onRemove, onToggleMax, onRejected }
+     * @param {object} hooks { onStatus, onFocus, onRemove, onToggleMax, onRejected, onRename }
+     * @param {string|null} label grid-only nickname
      */
-    constructor(name, hooks) {
+    constructor(name, hooks, label) {
       this.name = name;
       this.hooks = hooks;
+      this.label = label || null;
+      this.maximized = false;
+      this.deadKind = null;
+      this.renameInput = null;
       this.status = 'connecting';
       this.ws = null;
       this.opened = false;
@@ -459,19 +480,69 @@
     _buildDom() {
       this.dotEl = h('span', { class: 'dot connecting', 'aria-hidden': 'true' });
       this.stateEl = h('span', { class: 'pane-state' });
-      this.maxBtn = h('button', { class: 'pane-btn pane-max', type: 'button', title: 'Maximise', 'aria-label': `Maximise ${this.name}`, text: '⤢' });
-      this.closeBtn = h('button', { class: 'pane-btn close', type: 'button', title: 'Remove from grid (session keeps running)', 'aria-label': `Remove ${this.name} from grid`, text: '×' });
+      this.nickEl = h('span', { class: 'pane-nick' });
+      this.tmuxEl = h('span', { class: 'pane-tmux', hidden: true });
+      this.nameEl = h('span', { class: 'pane-name' }, this.nickEl, this.tmuxEl);
+      this.renameBtn = h('button', { class: 'pane-btn pane-rename', type: 'button', title: 'Set nickname (grid only)', text: '✎' });
+      this.maxBtn = h('button', { class: 'pane-btn pane-max', type: 'button', title: 'Maximise', text: '⤢' });
+      this.closeBtn = h('button', { class: 'pane-btn close', type: 'button', title: 'Remove from grid (session keeps running)', text: '×' });
       this.headerEl = h('div', { class: 'pane-header' },
-        this.dotEl,
-        h('span', { class: 'pane-name', title: this.name, text: this.name }),
-        this.stateEl, this.maxBtn, this.closeBtn);
+        this.dotEl, this.nameEl, this.stateEl, this.renameBtn, this.maxBtn, this.closeBtn);
       this.termHost = h('div', { class: 'pane-term' });
-      this.deadMsgEl = h('div', { text: 'Session no longer exists.' });
+      this.deadMsgEl = h('div');
       this.deadEl = h('div', { class: 'pane-dead', hidden: true },
         this.deadMsgEl,
         h('button', { class: 'btn-secondary', type: 'button', text: 'Remove from grid', onclick: () => this.hooks.onRemove(this) }));
-      this.el = h('section', { class: 'pane', 'aria-label': `Terminal ${this.name}` },
+      this.el = h('section', { class: 'pane' },
         this.headerEl, h('div', { class: 'pane-body' }, this.termHost, this.deadEl));
+      this.setLabel(this.label);
+    }
+
+    // --- Nickname (grid-only; the tmux session is never renamed) ---
+    get displayName() { return this.label || this.name; }
+
+    setLabel(label) {
+      this.label = label || null;
+      const display = this.displayName;
+      this.nickEl.textContent = display;
+      this.tmuxEl.textContent = this.name;
+      this.tmuxEl.hidden = !this.label;
+      this.nameEl.title = paneTooltip(this.name, this.label);
+      this.el.setAttribute('aria-label', `Terminal ${display}`);
+      this.renameBtn.setAttribute('aria-label', `Set nickname for ${display}`);
+      this.closeBtn.setAttribute('aria-label', `Remove ${display} from grid`);
+      this.setMaximized(this.maximized);
+      this._renderDeadMsg();
+    }
+
+    startRename() {
+      if (this.renameInput || this.disposed) return;
+      const input = h('input', {
+        class: 'pane-rename-input', type: 'text', maxLength: LABEL_MAX,
+        value: this.label || '', placeholder: this.name,
+        autocomplete: 'off', autocapitalize: 'off', spellcheck: false,
+        'aria-label': `Nickname for tmux session ${this.name} (empty to clear)`,
+      });
+      this.renameInput = input;
+      const finish = (save, refocus) => {
+        if (this.renameInput !== input) return; // already finished
+        this.renameInput = null;
+        const value = input.value;
+        input.replaceWith(this.nameEl);
+        if (save) this.hooks.onRename(this, value);
+        if (refocus) this.focus();
+      };
+      input.addEventListener('keydown', e => {
+        e.stopPropagation(); // never reaches the terminal / global shortcuts
+        if (e.key === 'Enter') { e.preventDefault(); finish(true, true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false, true); }
+      });
+      // Blur saves. Only pull focus back to the terminal if focus isn't moving somewhere else
+      // (and not on mobile, where that would keep the on-screen keyboard up).
+      input.addEventListener('blur', e => finish(true, !e.relatedTarget && !document.body.classList.contains('mobile')));
+      this.nameEl.replaceWith(input);
+      input.focus();
+      input.select();
     }
 
     _buildTerminal() {
@@ -503,8 +574,16 @@
       // Focus tracking: any pointer interaction or keyboard focus inside the tile.
       this.el.addEventListener('pointerdown', () => this.hooks.onFocus(this));
       this.el.addEventListener('focusin', () => this.hooks.onFocus(this));
-      this.headerEl.addEventListener('click', e => { if (!e.target.closest('button')) this.focus(); });
-      this.headerEl.addEventListener('dblclick', e => { if (!e.target.closest('button')) this.hooks.onToggleMax(this); });
+      this.headerEl.addEventListener('click', e => { if (!e.target.closest('button, input')) this.focus(); });
+      this.headerEl.addEventListener('dblclick', e => { if (!e.target.closest('button, input')) this.hooks.onToggleMax(this); });
+      // Double-click the name text → rename (instead of maximise)
+      this.nickEl.addEventListener('dblclick', e => { e.stopPropagation(); this.startRename(); });
+      this.tmuxEl.addEventListener('dblclick', e => { e.stopPropagation(); this.startRename(); });
+      // While editing, pressing ✎ again saves (keep focus in the input so blur doesn't save first)
+      this.renameBtn.addEventListener('pointerdown', e => { if (this.renameInput) e.preventDefault(); });
+      this.renameBtn.addEventListener('click', () => {
+        if (this.renameInput) this.renameInput.blur(); else this.startRename();
+      });
       this.maxBtn.addEventListener('click', () => this.hooks.onToggleMax(this));
       this.closeBtn.addEventListener('click', () => this.hooks.onRemove(this));
 
@@ -596,9 +675,9 @@
         if (ws !== this.ws || this.disposed) return;
         this.ws = null;
         this._clearTimers();
-        if (event.code === 4404) { this._markDead('Session no longer exists.'); return; }
+        if (event.code === 4404) { this._markDead('gone'); return; }
         if (event.code === 1008) {
-          this._markDead('Connection rejected.');
+          this._markDead('rejected');
           this.hooks.onRejected(this); // lets the app check whether the token expired
           return;
         }
@@ -625,10 +704,17 @@
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
     }
 
-    _markDead(msg) {
-      this.deadMsgEl.textContent = msg;
+    _markDead(kind) {
+      this.deadKind = kind;
+      this._renderDeadMsg();
       this.deadEl.hidden = false;
       this._setStatus('dead');
+    }
+
+    _renderDeadMsg() {
+      if (!this.deadKind) return;
+      const who = this.label ? `"${this.label}" (tmux: ${this.name})` : `Session "${this.name}"`;
+      this.deadMsgEl.textContent = this.deadKind === 'gone' ? `${who} no longer exists.` : `${who}: connection rejected.`;
     }
 
     _setStatus(status) {
@@ -661,14 +747,16 @@
     }
 
     setMaximized(on) {
+      this.maximized = !!on;
       this.maxBtn.textContent = on ? '⤡' : '⤢';
       this.maxBtn.title = on ? 'Restore grid' : 'Maximise';
-      this.maxBtn.setAttribute('aria-label', on ? 'Restore grid' : `Maximise ${this.name}`);
+      this.maxBtn.setAttribute('aria-label', on ? 'Restore grid' : `Maximise ${this.displayName}`);
     }
 
     dispose() {
       if (this.disposed) return;
       this.disposed = true;
+      this.renameInput = null; // discard an in-progress rename (its blur must not save)
       this._clearTimers();
       clearTimeout(this.fitTimer);
       this._closeSocket();
@@ -681,7 +769,7 @@
   // ===================================================================
   // App state
   // ===================================================================
-  const state = { sessions: [], layout: 'auto', maximized: null };
+  const state = { sessions: [], layout: 'auto', maximized: null, labels: new Map() }; // labels: tmuxName → nickname
   const panes = new Map(); // name → Pane
   let focusedName = null;
   let mobileActive = null;
@@ -695,6 +783,9 @@
   const mobileQuery = window.matchMedia('(max-width: 768px), (pointer: coarse) and (max-width: 900px)');
   const isMobile = () => mobileQuery.matches;
 
+  const labelOf = name => state.labels.get(name) || null;
+  const displayName = name => labelOf(name) || name;
+
   function activePane() {
     const name = isMobile() ? mobileActive : focusedName;
     return (name && panes.get(name)) || null;
@@ -706,10 +797,11 @@
     onRemove: pane => removeSession(pane.name),
     onToggleMax: pane => { if (!isMobile()) setMaximized(state.maximized === pane.name ? null : pane.name); },
     onRejected: () => { api('GET', '/api/grid').catch(() => {}); }, // 401 → redirect home
+    onRename: (pane, value) => setLabel(pane.name, value),
   };
 
   function createPane(name) {
-    const pane = new Pane(name, paneHooks);
+    const pane = new Pane(name, paneHooks, labelOf(name));
     panes.set(name, pane);
     return pane;
   }
@@ -732,7 +824,9 @@
     const index = state.sessions.indexOf(name);
     if (index === -1) return;
     const wasMaximized = state.maximized === name;
+    const label = labelOf(name);
     state.sessions.splice(index, 1);
+    state.labels.delete(name);
     const pane = panes.get(name);
     if (pane) pane.dispose(); // detaches only; the tmux session keeps running
     panes.delete(name);
@@ -744,19 +838,32 @@
     render();
     saveSoon();
 
-    showNotice(`Removed "${name}" from grid`, {
+    showNotice(`Removed "${label || name}" from grid`, {
       actionLabel: 'Undo',
-      onAction: () => restoreSession(name, index, wasMaximized),
+      onAction: () => restoreSession(name, index, wasMaximized, label),
     });
   }
 
-  function restoreSession(name, index, wasMaximized) {
+  function restoreSession(name, index, wasMaximized, label) {
     if (state.sessions.includes(name)) return;
     state.sessions.splice(Math.min(index, state.sessions.length), 0, name);
+    if (label) state.labels.set(name, label);
     createPane(name);
     if (wasMaximized) state.maximized = name;
     mobileActive = name;
     setFocused(name);
+    render();
+    saveSoon();
+  }
+
+  // Empty value clears the nickname (pane falls back to the tmux name).
+  function setLabel(name, value) {
+    const pane = panes.get(name);
+    if (!pane) return;
+    const label = cleanLabel(value);
+    if ((labelOf(name) || '') === label) return;
+    if (label) state.labels.set(name, label); else state.labels.delete(name);
+    pane.setLabel(label);
     render();
     saveSoon();
   }
@@ -852,9 +959,9 @@
 
   function chip(name, props) {
     const pane = panes.get(name);
-    return h('button', { class: 'chip', type: 'button', 'data-name': name, title: name, ...props },
+    return h('button', { class: 'chip', type: 'button', 'data-name': name, title: paneTooltip(name, labelOf(name)), ...props },
       h('span', { class: `dot ${pane ? pane.status : ''}`, 'aria-hidden': 'true' }),
-      h('span', { class: 'label', text: name }));
+      h('span', { class: 'label', text: displayName(name) }));
   }
 
   function renderMaxStrip(maxName) {
@@ -864,7 +971,7 @@
     for (const name of state.sessions) {
       maxStrip.append(chip(name, {
         'aria-current': name === maxName ? 'true' : 'false',
-        'aria-label': `Maximise ${name}`,
+        'aria-label': `Maximise ${displayName(name)}`,
         onclick: () => setMaximized(name),
       }));
     }
@@ -911,7 +1018,8 @@
   let saveTimer = null;
 
   function snapshot() {
-    return { sessions: state.sessions.slice(), layout: state.layout, maximized: state.maximized };
+    const labels = Object.fromEntries(state.sessions.filter(n => state.labels.has(n)).map(n => [n, state.labels.get(n)]));
+    return { sessions: state.sessions.slice(), layout: state.layout, maximized: state.maximized, labels };
   }
 
   function saveSoon() {
@@ -957,6 +1065,12 @@
       state.sessions = sessions;
       state.layout = LAYOUTS.includes(data.layout) ? data.layout : 'auto';
       state.maximized = sessions.includes(data.maximized) ? data.maximized : null;
+      state.labels = new Map();
+      const labels = data.labels && typeof data.labels === 'object' ? data.labels : {};
+      for (const [name, v] of Object.entries(labels)) {
+        const label = cleanLabel(v);
+        if (label && sessions.includes(name)) state.labels.set(name, label);
+      }
     } catch (e) {
       if (e.message === 'Unauthorized') return;
       $('loading-state').hidden = true;
@@ -1089,7 +1203,7 @@
         }
       }
       if (inGrid.length && available.length) {
-        pickerList.append(h('div', { class: 'picker-note', text: `Already in grid (hidden): ${inGrid.map(s => s.name).join(', ')}` }));
+        pickerList.append(h('div', { class: 'picker-note', text: `Already in grid (hidden): ${inGrid.map(s => labelOf(s.name) ? `${labelOf(s.name)} (${s.name})` : s.name).join(', ')}` }));
       }
     }
     updatePickerButton();

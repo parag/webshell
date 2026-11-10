@@ -334,9 +334,29 @@ app.get('/api/tmux/sessions', authMiddleware, (req, res) => {
 
 // --- Grid layout API (stored in settings under key 'grid') ---
 
-const GRID_DEFAULT = () => ({ sessions: [], layout: 'auto', maximized: null });
+const GRID_DEFAULT = () => ({ sessions: [], layout: 'auto', maximized: null, labels: {} });
 const GRID_LAYOUTS = ['auto', 'columns', 'rows'];
 const GRID_NAME_RE = /^[A-Za-z0-9_-]{1,100}$/;
+const GRID_LABEL_MAX = 60;
+const GRID_LABEL_CTRL_RE = /[\u0000-\u001f\u007f-\u009f]/;
+
+// Grid-only nicknames for panes: { [tmuxName]: label }. The tmux session itself is never renamed.
+// Returns [error, cleanLabels]; missing/null labels mean "no nicknames". Empty strings are dropped.
+function normalizeGridLabels(labels, sessions) {
+  if (labels === undefined || labels === null) return [null, {}];
+  if (typeof labels !== 'object' || Array.isArray(labels)) return ['labels must be an object.', null];
+  const out = [];
+  for (const [key, value] of Object.entries(labels)) {
+    if (!sessions.includes(key)) return ['labels keys must be in sessions.', null];
+    if (typeof value !== 'string') return ['labels values must be strings.', null];
+    const v = value.trim();
+    if (!v) continue;
+    if (v.length > GRID_LABEL_MAX) return [`labels must be at most ${GRID_LABEL_MAX} characters.`, null];
+    if (GRID_LABEL_CTRL_RE.test(v)) return ['labels must not contain control characters.', null];
+    out.push([key, v]);
+  }
+  return [null, Object.fromEntries(out)];
+}
 
 function validateGrid(g) {
   if (!g || typeof g !== 'object' || Array.isArray(g)) return 'Body must be an object.';
@@ -351,7 +371,7 @@ function validateGrid(g) {
   if (maximized !== null && maximized !== undefined && !sessions.includes(maximized)) {
     return 'maximized must be null or one of sessions.';
   }
-  return null;
+  return normalizeGridLabels(g.labels, sessions)[0];
 }
 
 function getGrid() {
@@ -360,7 +380,7 @@ function getGrid() {
   try {
     const g = JSON.parse(raw);
     if (validateGrid(g)) return GRID_DEFAULT();
-    return { sessions: g.sessions, layout: g.layout, maximized: g.maximized ?? null };
+    return { sessions: g.sessions, layout: g.layout, maximized: g.maximized ?? null, labels: normalizeGridLabels(g.labels, g.sessions)[1] };
   } catch {
     return GRID_DEFAULT();
   }
@@ -373,7 +393,8 @@ app.get('/api/grid', authMiddleware, (req, res) => {
 app.put('/api/grid', authMiddleware, (req, res) => {
   const err = validateGrid(req.body);
   if (err) return res.status(400).json({ error: err });
-  const g = { sessions: req.body.sessions, layout: req.body.layout, maximized: req.body.maximized ?? null };
+  const { sessions, layout } = req.body;
+  const g = { sessions, layout, maximized: req.body.maximized ?? null, labels: normalizeGridLabels(req.body.labels, sessions)[1] };
   setSetting('grid', JSON.stringify(g));
   res.json(g);
 });
