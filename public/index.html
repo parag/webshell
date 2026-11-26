@@ -487,8 +487,9 @@
 <div class="modal-overlay" id="project-modal">
   <div class="modal">
     <h2>New Project</h2>
-    <input type="text" id="project-name-input" placeholder="Project name" autocapitalize="off" autocorrect="off">
-    <input type="text" id="project-dir-input" placeholder="Working directory (optional)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <input type="text" id="project-name-input" placeholder="Project name (letters, numbers, - or _)" autocapitalize="off" autocorrect="off">
+    <input type="text" id="project-dir-input" placeholder="Folder, e.g. ~/Documents/Workspace/control-panel (optional)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="modal-error" id="project-create-error"></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" id="project-modal-cancel">Cancel</button>
       <button class="btn btn-primary" id="project-modal-create" style="max-width:none">Create</button>
@@ -501,6 +502,7 @@
   <div class="modal">
     <h2>New Session</h2>
     <input type="text" id="session-name-input" placeholder="Session name (optional)" autocapitalize="off" autocorrect="off">
+    <div class="modal-error" id="session-create-error"></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" id="session-modal-cancel">Cancel</button>
       <button class="btn btn-primary" id="session-modal-create" style="max-width:none">Create</button>
@@ -1147,6 +1149,7 @@
   document.getElementById('new-project-btn').addEventListener('click', () => {
     projectNameInput.value = '';
     document.getElementById('project-dir-input').value = '';
+    document.getElementById('project-create-error').style.display = 'none';
     projectModal.classList.add('active');
     setTimeout(() => projectNameInput.focus(), 100);
   });
@@ -1157,13 +1160,24 @@
     const name = projectNameInput.value.trim();
     if (!name) return;
     const dir = document.getElementById('project-dir-input').value.trim();
+    const errEl = document.getElementById('project-create-error');
+    errEl.style.display = 'none';
     try {
       const body = { name };
       if (dir) body.directory = dir;
-      await apiJson('POST', '/api/projects', body);
+      const res = await api('POST', '/api/projects', body);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        errEl.textContent = data.error || 'Could not create the project.';
+        errEl.style.display = 'block';
+        return;
+      }
       projectModal.classList.remove('active');
       loadProjects();
-    } catch {}
+    } catch {
+      errEl.textContent = 'Could not reach the server.';
+      errEl.style.display = 'block';
+    }
   });
   projectNameInput.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('project-modal-create').click(); });
 
@@ -1249,6 +1263,7 @@
   const sessionNameInput = document.getElementById('session-name-input');
   function openNewSessionModal() {
     sessionNameInput.value = '';
+    document.getElementById('session-create-error').style.display = 'none';
     sessionModal.classList.add('active');
     setTimeout(() => sessionNameInput.focus(), 100);
   }
@@ -1259,12 +1274,23 @@
   document.getElementById('session-modal-create').addEventListener('click', async () => {
     const name = sessionNameInput.value.trim();
     if (!currentProject) return;
+    const errEl = document.getElementById('session-create-error');
+    errEl.style.display = 'none';
     try {
-      const data = await apiJson('POST', `/api/projects/${currentProject.id}/sessions`, name ? { name } : {});
+      const res = await api('POST', `/api/projects/${currentProject.id}/sessions`, name ? { name } : {});
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        errEl.textContent = data.error || 'Could not create the session.';
+        errEl.style.display = 'block';
+        return;
+      }
       sessionModal.classList.remove('active');
       currentSessionName = data.name;
       connectToSession(data.tmux_name);
-    } catch {}
+    } catch {
+      errEl.textContent = 'Could not reach the server.';
+      errEl.style.display = 'block';
+    }
   });
   sessionNameInput.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('session-modal-create').click(); });
 

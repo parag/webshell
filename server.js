@@ -438,6 +438,15 @@ function isValidName(name) {
   return /^[a-zA-Z0-9_-]{1,50}$/.test(name);
 }
 
+// Accept "~/x" and relative paths for a project directory; store an absolute path.
+function resolveDir(dir) {
+  if (!dir) return null;
+  let d = String(dir).trim();
+  if (d === '~') d = os.homedir();
+  else if (d.startsWith('~/')) d = path.join(os.homedir(), d.slice(2));
+  return path.resolve(os.homedir(), d);
+}
+
 // --- tmux helpers ---
 
 function getTmuxSessions() {
@@ -598,12 +607,13 @@ app.get('/api/projects', authMiddleware, (req, res) => {
 });
 
 app.post('/api/projects', authMiddleware, (req, res) => {
-  const { name, directory } = req.body || {};
+  const { name } = req.body || {};
+  const directory = resolveDir((req.body || {}).directory);
   if (!name || !isValidName(name)) {
-    return res.status(400).json({ error: 'Invalid name. Use alphanumeric, dash, underscore only.' });
+    return res.status(400).json({ error: 'Name can use letters, numbers, - and _ only (no spaces).' });
   }
   if (directory && !fs.existsSync(directory)) {
-    return res.status(400).json({ error: 'Directory does not exist.' });
+    return res.status(400).json({ error: `Folder not found: ${directory}` });
   }
   try {
     const result = db.prepare('INSERT INTO projects (name, directory) VALUES (?, ?)').run(name, directory || null);
@@ -618,10 +628,11 @@ app.put('/api/projects/:id', authMiddleware, (req, res) => {
   if (isNaN(id)) return res.status(400).json({ error: 'Invalid project id.' });
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
   if (!project) return res.status(404).json({ error: 'Project not found.' });
-  const { directory } = req.body || {};
-  if (directory !== undefined) {
+  const raw = (req.body || {}).directory;
+  if (raw !== undefined) {
+    const directory = resolveDir(raw);
     if (directory && !fs.existsSync(directory)) {
-      return res.status(400).json({ error: 'Directory does not exist.' });
+      return res.status(400).json({ error: `Folder not found: ${directory}` });
     }
     db.prepare('UPDATE projects SET directory = ? WHERE id = ?').run(directory || null, id);
   }
