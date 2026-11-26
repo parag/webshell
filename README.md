@@ -26,7 +26,7 @@ This is ~300 lines of server code. No build step, no framework. One script to se
 ## Stack
 
 - **Backend:** Node.js + Express + WebSocket + node-pty
-- **Frontend:** xterm.js (CDN, no build step), vanilla JS SPA
+- **Frontend:** xterm.js, marked and highlight.js vendored in `public/vendor/` (no CDN, no build step), vanilla JS SPA
 - **Storage:** SQLite (better-sqlite3) for projects, sessions, and settings
 - **Terminal:** tmux sessions with zsh
 - **Proxy:** nginx + Let's Encrypt SSL
@@ -74,6 +74,7 @@ PORT=3000
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PORT` | No | Server port (default: 3000) |
+| `WEBSHELL_PASSWORD_FILE` | No | Read the password from this file instead of the first-visit setup (see below) |
 
 Then install dependencies and start:
 
@@ -83,6 +84,137 @@ node server.js
 ```
 
 Visit `http://localhost:3000` — the first-visit setup screen will prompt you to choose a password. The password is bcrypt-hashed and stored in `data/webshell.db`.
+
+## macOS + Tailscale (no public exposure)
+
+This runs webshell on a Mac (e.g. a Mac mini at home) and reaches it only from
+devices on your Tailscale tailnet. The server listens on `127.0.0.1` only;
+`tailscale serve` terminates HTTPS on the tailnet name and proxies to it.
+Nothing is exposed to the internet. Do not enable Funnel.
+
+### Install
+
+Needs Node 20+ (tested with 24), tmux (`brew install tmux`) and the Tailscale app.
+
+```bash
+git clone https://github.com/parag/webshell.git ~/Services/webshell
+cd ~/Services/webshell
+npm ci
+```
+
+`npm ci` runs a postinstall step that makes node-pty's `prebuilds/*/spawn-helper`
+executable. node-pty 1.1.0 ships it without the executable bit, which makes every
+terminal fail on macOS with `posix_spawnp failed`.
+
+### Password file
+
+```bash
+mkdir -m 700 -p ~/.config/webshell
+printf 'CHANGE-ME-dummy-password\n' > ~/.config/webshell/password
+chmod 600 ~/.config/webshell/password
+```
+
+With `WEBSHELL_PASSWORD_FILE` set:
+
+- the first-visit "set password" screen and the in-app password change are off;
+- every login reads the file fresh and compares its trimmed contents with what you typed;
+- while the file is missing, empty or still `CHANGE-ME-dummy-password`, every login is
+  refused with "set a password in <path>";
+- editing the file signs out every existing session, including open terminals
+  (within about 15 seconds).
+
+Edit the file to set or change the password. No restart needed.
+
+### tmux
+
+A `~/.tmux.conf` that works well with xterm.js:
+
+```
+set -sg escape-time 10
+set -g extended-keys on
+set -as terminal-features 'xterm*:extkeys'
+set -g mouse on
+set -g set-clipboard on
+set -g history-limit 50000
+set -g default-terminal "tmux-256color"
+```
+
+### LaunchAgent
+
+`~/Library/LaunchAgents/com.parag.webshell.plist` (adjust the user name and Node path):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.parag.webshell</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOU/.nvm/versions/node/v24.2.0/bin/node</string>
+    <string>/Users/YOU/Services/webshell/server.js</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/YOU/Services/webshell</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/Users/YOU/.local/bin:/Users/YOU/.nvm/versions/node/v24.2.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PORT</key><string>3000</string>
+    <key>LANG</key><string>en_US.UTF-8</string>
+    <key>LC_ALL</key><string>en_US.UTF-8</string>
+    <key>WEBSHELL_PASSWORD_FILE</key><string>/Users/YOU/.config/webshell/password</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>AbandonProcessGroup</key><true/>
+  <key>StandardOutPath</key><string>/Users/YOU/Library/Logs/webshell.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/Library/Logs/webshell.err.log</string>
+</dict>
+</plist>
+```
+
+`AbandonProcessGroup` keeps the tmux server (and your sessions) alive when launchd
+restarts webshell.
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.parag.webshell.plist
+launchctl kickstart -k gui/$(id -u)/com.parag.webshell   # restart after a git pull
+launchctl bootout gui/$(id -u)/com.parag.webshell        # stop and unload
+lsof -nP -iTCP:3000 -sTCP:LISTEN                         # should show 127.0.0.1:3000 only
+```
+
+A LaunchAgent runs in your login session, so the Mac has to be logged in
+(with FileVault on, someone must log in after a reboot).
+
+### Tailscale Serve
+
+HTTPS certificates must be enabled for the tailnet (admin console, DNS page).
+Then:
+
+```bash
+tailscale serve --bg 3000
+tailscale serve status
+```
+
+Open `https://<machine>.<tailnet>.ts.net/` from any device on the tailnet.
+
+### Notes
+
+- `/api/notify` accepts unauthenticated requests only when they come straight from
+  the same machine (`curl http://127.0.0.1:3000/api/notify ...`). Requests relayed
+  by `tailscale serve` or nginx need a token.
+- Logins are limited to 5 failures per minute per client, then locked out for a minute,
+  doubling on each repeat up to 15 minutes. Behind `tailscale serve` every request
+  arrives from 127.0.0.1, so for loopback peers the client is the
+  `Tailscale-User-Login` header, then the first `X-Forwarded-For` hop; one person's
+  typos do not lock out the rest of the tailnet. These headers are ignored from any
+  other peer. Lockouts are logged as `login lockout: ts:<login> for 60s`. Such a
+  request still does not count as local for `/api/notify`. Test: `node --test test/*.test.js`.
+- Tokens expire after 30 days.
+- The WebSocket still carries the token as a query parameter (browsers cannot set
+  headers on a WebSocket). File downloads and image previews send it as a header.
+- On touch devices a small key bar under the terminal adds Esc, Tab, Shift-Tab,
+  Ctrl-C, Ctrl-D, arrows and Enter.
 
 ## Usage
 
@@ -108,8 +240,11 @@ Browser → nginx (HTTPS) → Node.js (:3000) → node-pty → tmux sessions
 - HTTPS via Let's Encrypt (auto-renewing)
 - Password hashed with bcrypt (cost factor 12)
 - First-visit setup — no default password, no password in config files
-- Token-based session auth on all API + WebSocket endpoints
+- Token-based session auth on all API + WebSocket endpoints; tokens expire after 30 days
 - Password change invalidates all other sessions
+- Login rate limit: 5 failures per minute per client (Tailscale login behind Serve), then an escalating lockout
+- tmux is always run with an argument list, never through a shell
+- No third-party CDN: frontend libraries are served from `public/vendor/`
 - nginx reverse proxy — only ports 80/443 exposed
 - Session name sanitization to prevent command injection
 
