@@ -203,8 +203,13 @@ Open `https://<machine>.<tailnet>.ts.net/` from any device on the tailnet.
 - `/api/notify` accepts unauthenticated requests only when they come straight from
   the same machine (`curl http://127.0.0.1:3000/api/notify ...`). Requests relayed
   by `tailscale serve` or nginx need a token.
-- Logins are limited to 5 failures per minute per IP, then locked out for a minute,
-  doubling on each repeat up to 15 minutes.
+- Logins are limited to 5 failures per minute per client, then locked out for a minute,
+  doubling on each repeat up to 15 minutes. Behind `tailscale serve` every request
+  arrives from 127.0.0.1, so for loopback peers the client is the
+  `Tailscale-User-Login` header, then the first `X-Forwarded-For` hop; one person's
+  typos do not lock out the rest of the tailnet. These headers are ignored from any
+  other peer. Lockouts are logged as `login lockout: ts:<login> for 60s`. Such a
+  request still does not count as local for `/api/notify`. Test: `node --test test/*.test.js`.
 - Tokens expire after 30 days.
 - The WebSocket still carries the token as a query parameter (browsers cannot set
   headers on a WebSocket). File downloads and image previews send it as a header.
@@ -237,7 +242,7 @@ Browser → nginx (HTTPS) → Node.js (:3000) → node-pty → tmux sessions
 - First-visit setup — no default password, no password in config files
 - Token-based session auth on all API + WebSocket endpoints; tokens expire after 30 days
 - Password change invalidates all other sessions
-- Login rate limit: 5 failures per minute per IP, then an escalating lockout
+- Login rate limit: 5 failures per minute per client (Tailscale login behind Serve), then an escalating lockout
 - tmux is always run with an argument list, never through a shell
 - No third-party CDN: frontend libraries are served from `public/vendor/`
 - nginx reverse proxy — only ports 80/443 exposed

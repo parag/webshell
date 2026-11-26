@@ -11,6 +11,7 @@ const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
 const multer = require('multer');
+const { clientKey, isLoopback } = require('./lib/client-key');
 const HOME_DIR = os.homedir();
 const DATA_DIR = path.join(__dirname, 'data');
 
@@ -233,11 +234,12 @@ app.get('/api/setup-status', (req, res) => {
   res.json({ setup_done: isSetupDone(), password_file: !!PASSWORD_FILE });
 });
 
-// --- Login rate limit: 5 failures per minute per IP, then an escalating lockout ---
+// --- Login rate limit: 5 failures per minute per client, then an escalating lockout ---
+// The client is the Tailscale login (or forwarded IP) behind a local proxy, else the socket IP: see lib/client-key.js
 const LOGIN_WINDOW_MS = 60 * 1000;
 const LOGIN_MAX_FAILURES = 5;
 const LOGIN_MAX_LOCK_MS = 15 * 60 * 1000;
-const loginFailures = new Map(); // ip -> { times: number[], lockedUntil: number, lockMs: number }
+const loginFailures = new Map(); // client key -> { times: number[], lockedUntil: number, lockMs: number }
 
 function loginLockRemaining(ip) {
   const e = loginFailures.get(ip);
@@ -254,12 +256,13 @@ function recordLoginFailure(ip) {
     e.lockMs = e.lockMs ? Math.min(e.lockMs * 2, LOGIN_MAX_LOCK_MS) : LOGIN_WINDOW_MS;
     e.lockedUntil = now + e.lockMs;
     e.times = [];
+    console.log(`login lockout: ${ip} for ${e.lockMs / 1000}s`);
   }
   loginFailures.set(ip, e);
 }
 
 function rateLimited(req, res) {
-  const remaining = loginLockRemaining(req.ip);
+  const remaining = loginLockRemaining(clientKey(req));
   if (!remaining) return false;
   const secs = Math.ceil(remaining / 1000);
   res.set('Retry-After', String(secs));
@@ -305,7 +308,7 @@ app.post('/api/login', (req, res) => {
     const result = checkFilePassword(password);
     if (result.error) return res.status(403).json({ error: result.error });
     if (!result.ok) {
-      recordLoginFailure(req.ip);
+      recordLoginFailure(clientKey(req));
       return res.status(401).json({ error: 'Wrong password' });
     }
     const token = crypto.randomBytes(32).toString('hex');
@@ -321,7 +324,7 @@ app.post('/api/login', (req, res) => {
     tokens.add(token);
     res.json({ token });
   } else {
-    recordLoginFailure(req.ip);
+    recordLoginFailure(clientKey(req));
     res.status(401).json({ error: 'Wrong password' });
   }
 });
@@ -352,7 +355,7 @@ app.post('/api/change-password', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'New password must be at least 6 characters.' });
   }
   if (!bcrypt.compareSync(current_password, getPasswordHash())) {
-    recordLoginFailure(req.ip);
+    recordLoginFailure(clientKey(req));
     return res.status(401).json({ error: 'Current password is wrong.' });
   }
   const hash = bcrypt.hashSync(new_password, 12);
@@ -403,8 +406,7 @@ app.post('/api/settings/telegram/test', authMiddleware, async (req, res) => {
 // `tailscale serve` and nginx also connect from 127.0.0.1, so the socket address alone
 // is not enough: proxied requests carry forwarding headers and a public Host.
 function isDirectLocalRequest(req) {
-  const addr = req.socket.remoteAddress || '';
-  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(addr)) return false;
+  if (!isLoopback(req.socket.remoteAddress)) return false;
   const h = req.headers;
   if (h['x-forwarded-for'] || h['x-forwarded-host'] || h['x-forwarded-proto'] || h['x-real-ip'] || h['forwarded']) return false;
   if (Object.keys(h).some(k => k.startsWith('tailscale-'))) return false;
