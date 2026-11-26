@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0d1117">
 <title>Terminal</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<link rel="stylesheet" href="/vendor/xterm/xterm.css">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overscroll-behavior: none; }
@@ -154,6 +154,23 @@
   .connection-status.connected { color: #3fb950; background: rgba(63,185,80,0.1); }
   .connection-status.disconnected { color: #f85149; background: rgba(248,81,73,0.1); }
   #terminal-container { flex: 1; overflow: hidden; touch-action: none; }
+  /* --- Mobile key bar (touch devices only) --- */
+  .keybar {
+    display: none; flex-shrink: 0; gap: 4px; padding: 4px 6px;
+    background: #161b22; border-top: 1px solid #21262d;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .keybar::-webkit-scrollbar { display: none; }
+  .keybar button {
+    flex: 1 0 auto; min-width: 34px; height: 30px; padding: 0 6px;
+    background: #21262d; border: 1px solid #30363d; border-radius: 5px;
+    color: #c9d1d9; font: 12px 'Menlo', 'DejaVu Sans Mono', monospace;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  .keybar button:active { background: #30363d; }
+  @media (hover: none) and (pointer: coarse) {
+    .keybar { display: flex; }
+  }
   /* --- Sidebar --- */
   .sidebar-backdrop {
     display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
@@ -406,6 +423,18 @@
     <span class="connection-status connected" id="conn-status">Connected</span>
   </div>
   <div id="terminal-container"></div>
+  <div class="keybar" id="keybar" aria-label="Extra keys">
+    <button data-key="esc">Esc</button>
+    <button data-key="tab">Tab</button>
+    <button data-key="stab">&#8679;Tab</button>
+    <button data-key="ctrlc">^C</button>
+    <button data-key="ctrld">^D</button>
+    <button data-key="left" aria-label="Left">&larr;</button>
+    <button data-key="up" aria-label="Up">&uarr;</button>
+    <button data-key="down" aria-label="Down">&darr;</button>
+    <button data-key="right" aria-label="Right">&rarr;</button>
+    <button data-key="enter" aria-label="Enter">&#9166;</button>
+  </div>
 </div>
 
 <!-- Files View -->
@@ -484,6 +513,7 @@
   <div class="modal" style="max-height:85vh;overflow-y:auto">
     <h2>Settings</h2>
 
+    <div id="cp-section">
     <h3 style="font-size:14px;color:#8b949e;margin-bottom:12px">Change Password</h3>
     <input type="password" id="cp-current" placeholder="Current password" autocomplete="current-password">
     <input type="password" id="cp-new" placeholder="New password" autocomplete="new-password">
@@ -495,6 +525,7 @@
     </div>
 
     <hr style="border:none;border-top:1px solid #21262d;margin:0 0 20px">
+    </div>
 
     <h3 style="font-size:14px;color:#8b949e;margin-bottom:12px">Telegram Notifications</h3>
     <p style="font-size:12px;color:#6e7681;margin-bottom:12px">Get notified when commands taking &gt;10s finish. Create a bot via <a href="https://t.me/BotFather" target="_blank" style="color:#58a6ff">@BotFather</a>.</p>
@@ -517,12 +548,12 @@
 
 <div id="copy-toast" style="display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1f6feb;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;z-index:10000;box-shadow:0 4px 12px rgba(0,0,0,.4);"></div>
 
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+<link rel="stylesheet" href="/vendor/highlight/github-dark.min.css">
+<script src="/vendor/marked/marked.min.js"></script>
+<script src="/vendor/highlight/highlight.min.js"></script>
+<script src="/vendor/xterm/xterm.js"></script>
+<script src="/vendor/xterm/addon-fit.js"></script>
+<script src="/vendor/xterm/addon-web-links.js"></script>
 <script>
 (function() {
   let token = sessionStorage.getItem('token');
@@ -734,6 +765,7 @@
       const res = await api('POST', '/api/login', { password: passwordInput.value });
       const data = await res.json();
       if (!res.ok) {
+        loginError.textContent = data.error || 'Wrong password';
         loginError.style.display = 'block';
         return;
       }
@@ -742,6 +774,7 @@
       passwordInput.value = '';
       showView('projects');
     } catch {
+      loginError.textContent = 'Could not reach the server.';
       loginError.style.display = 'block';
     } finally {
       loginBtn.disabled = false;
@@ -1272,8 +1305,14 @@
       } catch {}
     };
 
-    ws.onclose = () => {
+    ws.onclose = event => {
       cleanupConnection();
+      // Token expired or the password changed: back to the login screen
+      if (event.code === 4401) {
+        sessionStorage.removeItem('token'); token = null; currentTmuxName = null;
+        showView('login');
+        return;
+      }
       // Only auto-reconnect if we're still on the terminal view for this session
       if (currentTmuxName === tmuxName && document.getElementById('terminal-view').style.display === 'flex') {
         connStatus.textContent = 'Reconnecting...';
@@ -1612,7 +1651,16 @@
 
     // Images: show inline
     if (isImageExt(fileName)) {
-      content.innerHTML = `<img src="/api/files/download?path=${encodeURIComponent(filePath)}&token=${encodeURIComponent(token)}" alt="${fileName}">`;
+      try {
+        const url = await fetchFileBlobUrl(filePath);
+        const img = document.createElement('img');
+        img.alt = fileName;
+        img.src = url;
+        content.innerHTML = '';
+        content.appendChild(img);
+      } catch {
+        content.innerHTML = '<div style="text-align:center;padding:40px;color:#f85149">Failed to load image</div>';
+      }
       return;
     }
 
@@ -1665,6 +1713,18 @@
     }
   }
 
+  // Fetch a file with the Authorization header and return a blob: URL for it,
+  // so the token never goes into a URL. The previous blob URL is released.
+  let lastBlobUrl = null;
+  async function fetchFileBlobUrl(filePath) {
+    const res = await api('GET', `/api/files/download?path=${encodeURIComponent(filePath)}`);
+    if (!res.ok) throw new Error('download failed');
+    const blob = await res.blob();
+    if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    lastBlobUrl = URL.createObjectURL(blob);
+    return lastBlobUrl;
+  }
+
   function escapeHtml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
@@ -1673,14 +1733,17 @@
     loadFiles(currentFilesDir);
   });
 
-  document.getElementById('fileview-download-btn').addEventListener('click', () => {
+  document.getElementById('fileview-download-btn').addEventListener('click', async () => {
     if (!currentViewFilePath) return;
-    const a = document.createElement('a');
-    a.href = `/api/files/download?path=${encodeURIComponent(currentViewFilePath)}&token=${encodeURIComponent(token)}`;
-    a.download = '';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    try {
+      const url = await fetchFileBlobUrl(currentViewFilePath);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = currentViewFilePath.split('/').pop() || 'download';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {}
   });
 
   // --- File Upload ---
@@ -1728,7 +1791,9 @@
   async function init() {
     try {
       const res = await fetch('/api/setup-status');
-      const { setup_done } = await res.json();
+      const { setup_done, password_file } = await res.json();
+      // Password lives in a file on the server: no in-app password change
+      if (password_file) document.getElementById('cp-section').style.display = 'none';
       if (!setup_done) {
         showView('setup');
         return;
@@ -1744,6 +1809,40 @@
       showView('login');
     }
   }
+  // --- Mobile key bar ---
+  // Sends the same bytes xterm.js would send for the key, over the same websocket.
+  // Arrows follow the terminal's cursor-key mode (ESC O A in application mode, ESC [ A otherwise).
+  function keySequence(key) {
+    const app = !!(currentTerm && currentTerm.modes && currentTerm.modes.applicationCursorKeysMode);
+    const arrow = c => (app ? '\x1bO' : '\x1b[') + c;
+    switch (key) {
+      case 'esc': return '\x1b';
+      case 'tab': return '\t';
+      case 'stab': return '\x1b[Z';
+      case 'ctrlc': return '\x03';
+      case 'ctrld': return '\x04';
+      case 'up': return arrow('A');
+      case 'down': return arrow('B');
+      case 'right': return arrow('C');
+      case 'left': return arrow('D');
+      case 'enter': return '\r';
+    }
+    return null;
+  }
+  document.querySelectorAll('#keybar button').forEach(btn => {
+    const fire = () => {
+      const seq = keySequence(btn.dataset.key);
+      if (seq && currentWs && currentWs.readyState === WebSocket.OPEN) {
+        currentWs.send(JSON.stringify({ type: 'input', data: seq }));
+      }
+    };
+    // Act on touchstart and cancel it, so the button never takes focus and the
+    // on-screen keyboard stays up. Mouse clicks still work for testing on desktop.
+    btn.addEventListener('touchstart', e => { e.preventDefault(); fire(); }, { passive: false });
+    btn.addEventListener('mousedown', e => e.preventDefault());
+    btn.addEventListener('click', fire);
+  });
+
   // --- Reconnect on mobile wake-up ---
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && currentTmuxName && currentWs && currentWs.readyState !== WebSocket.OPEN) {

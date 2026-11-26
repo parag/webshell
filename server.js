@@ -3,7 +3,7 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 const crypto = require('crypto');
-const { execSync, execFileSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -52,6 +52,13 @@ try {
   // column already exists
 }
 
+// Migration: tie each token to the password it was issued under (password-file mode)
+try {
+  db.exec("ALTER TABLE auth_tokens ADD COLUMN pw_fp TEXT DEFAULT NULL");
+} catch {
+  // column already exists
+}
+
 function getPasswordHash() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'password_hash'").get();
   return row ? row.value : null;
@@ -62,6 +69,7 @@ function setPasswordHash(hash) {
 }
 
 function isSetupDone() {
+  if (PASSWORD_FILE) return true;
   return getPasswordHash() !== null;
 }
 
@@ -72,6 +80,72 @@ function getSetting(key) {
 
 function setSetting(key, value) {
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+}
+
+// --- Password file (WEBSHELL_PASSWORD_FILE) ---
+// When set, the password lives in that file and is read fresh on every login and
+// every token check. Editing the file signs out every existing token. The
+// first-visit setup and in-app password change are disabled in this mode.
+
+const PASSWORD_FILE = process.env.WEBSHELL_PASSWORD_FILE
+  ? path.resolve(process.env.WEBSHELL_PASSWORD_FILE.replace(/^~(?=$|\/)/, HOME_DIR))
+  : null;
+const PASSWORD_PLACEHOLDER = 'CHANGE-ME-dummy-password';
+
+// Returns { password } or { error } with a message fit to show on the login screen.
+function readPasswordFile() {
+  let pw;
+  try {
+    pw = fs.readFileSync(PASSWORD_FILE, 'utf8').trim();
+  } catch {
+    pw = '';
+  }
+  if (!pw || pw === PASSWORD_PLACEHOLDER) {
+    return { error: `Login is disabled: set a password in ${PASSWORD_FILE}` };
+  }
+  return { password: pw };
+}
+
+// Key for fingerprinting the file password, so the DB never holds a bare hash of it.
+function getFingerprintKey() {
+  let key = getSetting('pw_fp_key');
+  if (!key) {
+    key = crypto.randomBytes(32).toString('hex');
+    setSetting('pw_fp_key', key);
+  }
+  return key;
+}
+
+function passwordFingerprint(pw) {
+  return crypto.createHmac('sha256', getFingerprintKey()).update(pw, 'utf8').digest('hex');
+}
+
+// Fingerprint of the password tokens must currently be bound to.
+// null means bcrypt mode; undefined means no valid password (all tokens refused).
+// Any change to the file seen since the last check (including to the placeholder and
+// back) drops every token, so restoring an old password never revives old sessions.
+function currentFingerprint() {
+  if (!PASSWORD_FILE) return null;
+  const { password } = readPasswordFile();
+  const fp = password ? passwordFingerprint(password) : undefined;
+  const seen = fp || 'none';
+  if (getSetting('pw_fp_seen') !== seen) {
+    db.prepare('DELETE FROM auth_tokens').run();
+    setSetting('pw_fp_seen', seen);
+  }
+  return fp;
+}
+
+function sha256(s) {
+  return crypto.createHash('sha256').update(String(s), 'utf8').digest();
+}
+
+function checkFilePassword(submitted) {
+  currentFingerprint(); // record the file state first, so a fresh token is not dropped by it
+  const { password, error } = readPasswordFile();
+  if (error) return { error };
+  const ok = typeof submitted === 'string' && crypto.timingSafeEqual(sha256(submitted), sha256(password));
+  return ok ? { ok: true, fp: passwordFingerprint(password) } : { ok: false };
 }
 
 // --- Telegram ---
@@ -111,12 +185,29 @@ const wss = new WebSocketServer({ noServer: true });
 const PORT = process.env.PORT || 3000;
 
 // --- Token management (SQLite-backed) ---
+const TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+
 const tokens = {
-  add(token) {
-    db.prepare('INSERT OR IGNORE INTO auth_tokens (token) VALUES (?)').run(token);
+  add(token, pwFp = null) {
+    db.prepare('INSERT OR IGNORE INTO auth_tokens (token, pw_fp) VALUES (?, ?)').run(token, pwFp);
   },
   has(token) {
-    return !!db.prepare('SELECT 1 FROM auth_tokens WHERE token = ?').get(token);
+    if (!token || typeof token !== 'string') return false;
+    const row = db.prepare('SELECT created_at, pw_fp FROM auth_tokens WHERE token = ?').get(token);
+    if (!row) return false;
+    if (row.created_at < Math.floor(Date.now() / 1000) - TOKEN_TTL_SECONDS) {
+      this.delete(token);
+      return false;
+    }
+    const fp = currentFingerprint();
+    if (fp === undefined) return false; // password file missing/placeholder: refuse everything
+    return row.pw_fp === fp; // bcrypt mode: both null; file mode: must match current file
+  },
+  prune() {
+    const cutoff = Math.floor(Date.now() / 1000) - TOKEN_TTL_SECONDS;
+    db.prepare('DELETE FROM auth_tokens WHERE created_at < ?').run(cutoff);
+    const fp = currentFingerprint();
+    if (fp) db.prepare('DELETE FROM auth_tokens WHERE pw_fp IS NOT ? ').run(fp);
   },
   delete(token) {
     db.prepare('DELETE FROM auth_tokens WHERE token = ?').run(token);
@@ -126,6 +217,8 @@ const tokens = {
   },
 };
 
+// Behind `tailscale serve` or nginx on the same host, take the client IP from X-Forwarded-For.
+app.set('trust proxy', 'loopback');
 app.use(express.json());
 // Grid view: /grid -> public/grid.html (/grid.html is served by express.static)
 app.get('/grid', (req, res) => {
@@ -137,11 +230,59 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Check if first-time setup is needed
 app.get('/api/setup-status', (req, res) => {
-  res.json({ setup_done: isSetupDone() });
+  res.json({ setup_done: isSetupDone(), password_file: !!PASSWORD_FILE });
 });
+
+// --- Login rate limit: 5 failures per minute per IP, then an escalating lockout ---
+const LOGIN_WINDOW_MS = 60 * 1000;
+const LOGIN_MAX_FAILURES = 5;
+const LOGIN_MAX_LOCK_MS = 15 * 60 * 1000;
+const loginFailures = new Map(); // ip -> { times: number[], lockedUntil: number, lockMs: number }
+
+function loginLockRemaining(ip) {
+  const e = loginFailures.get(ip);
+  if (!e) return 0;
+  return Math.max(0, e.lockedUntil - Date.now());
+}
+
+function recordLoginFailure(ip) {
+  const now = Date.now();
+  const e = loginFailures.get(ip) || { times: [], lockedUntil: 0, lockMs: 0 };
+  e.times = e.times.filter(t => now - t < LOGIN_WINDOW_MS);
+  e.times.push(now);
+  if (e.times.length >= LOGIN_MAX_FAILURES) {
+    e.lockMs = e.lockMs ? Math.min(e.lockMs * 2, LOGIN_MAX_LOCK_MS) : LOGIN_WINDOW_MS;
+    e.lockedUntil = now + e.lockMs;
+    e.times = [];
+  }
+  loginFailures.set(ip, e);
+}
+
+function rateLimited(req, res) {
+  const remaining = loginLockRemaining(req.ip);
+  if (!remaining) return false;
+  const secs = Math.ceil(remaining / 1000);
+  res.set('Retry-After', String(secs));
+  res.status(429).json({ error: `Too many failed attempts. Try again in ${secs}s.` });
+  return true;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, e] of loginFailures) {
+    // Forget an IP once it is unlocked and quiet for a while (lockMs decays with it)
+    if (e.lockedUntil + LOGIN_MAX_LOCK_MS < now && e.times.every(t => now - t > LOGIN_WINDOW_MS)) {
+      loginFailures.delete(ip);
+    }
+  }
+  try { tokens.prune(); } catch {}
+}, 10 * 60 * 1000).unref();
 
 // First-time password setup
 app.post('/api/setup', (req, res) => {
+  if (PASSWORD_FILE) {
+    return res.status(403).json({ error: `Password is set in ${PASSWORD_FILE}, not here.` });
+  }
   if (isSetupDone()) {
     return res.status(403).json({ error: 'Password already set.' });
   }
@@ -157,15 +298,30 @@ app.post('/api/setup', (req, res) => {
 });
 
 app.post('/api/login', (req, res) => {
+  if (rateLimited(req, res)) return;
+  const { password } = req.body || {};
+
+  if (PASSWORD_FILE) {
+    const result = checkFilePassword(password);
+    if (result.error) return res.status(403).json({ error: result.error });
+    if (!result.ok) {
+      recordLoginFailure(req.ip);
+      return res.status(401).json({ error: 'Wrong password' });
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    tokens.add(token, result.fp);
+    return res.json({ token });
+  }
+
   if (!isSetupDone()) {
     return res.status(403).json({ error: 'Setup not complete.' });
   }
-  const { password } = req.body || {};
   if (typeof password === 'string' && bcrypt.compareSync(password, getPasswordHash())) {
     const token = crypto.randomBytes(32).toString('hex');
     tokens.add(token);
     res.json({ token });
   } else {
+    recordLoginFailure(req.ip);
     res.status(401).json({ error: 'Wrong password' });
   }
 });
@@ -184,6 +340,10 @@ function authMiddleware(req, res, next) {
 
 // Change password (requires auth)
 app.post('/api/change-password', authMiddleware, (req, res) => {
+  if (PASSWORD_FILE) {
+    return res.status(400).json({ error: `Password is managed in ${PASSWORD_FILE}. Edit that file to change it.` });
+  }
+  if (rateLimited(req, res)) return;
   const { current_password, new_password } = req.body || {};
   if (!current_password || !new_password) {
     return res.status(400).json({ error: 'Both current and new password required.' });
@@ -192,6 +352,7 @@ app.post('/api/change-password', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'New password must be at least 6 characters.' });
   }
   if (!bcrypt.compareSync(current_password, getPasswordHash())) {
+    recordLoginFailure(req.ip);
     return res.status(401).json({ error: 'Current password is wrong.' });
   }
   const hash = bcrypt.hashSync(new_password, 12);
@@ -238,12 +399,33 @@ app.post('/api/settings/telegram/test', authMiddleware, async (req, res) => {
   res.json({ ok });
 });
 
-// Notify endpoint (no auth — only accessible from localhost)
-app.post('/api/notify', async (req, res) => {
+// A request made straight to the server from this machine, not relayed by a proxy.
+// `tailscale serve` and nginx also connect from 127.0.0.1, so the socket address alone
+// is not enough: proxied requests carry forwarding headers and a public Host.
+function isDirectLocalRequest(req) {
+  const addr = req.socket.remoteAddress || '';
+  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(addr)) return false;
+  const h = req.headers;
+  if (h['x-forwarded-for'] || h['x-forwarded-host'] || h['x-forwarded-proto'] || h['x-real-ip'] || h['forwarded']) return false;
+  if (Object.keys(h).some(k => k.startsWith('tailscale-'))) return false;
+  const host = String(h.host || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+  return ['localhost', '127.0.0.1', '::1'].includes(host);
+}
+
+function escapeTelegramHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Notify endpoint: a direct local request (e.g. a shell hook doing
+// `curl http://127.0.0.1:3000/api/notify`), or any request with a valid token.
+app.post('/api/notify', (req, res, next) => {
+  if (isDirectLocalRequest(req)) return next();
+  return authMiddleware(req, res, next);
+}, async (req, res) => {
   const { message, session, command, duration } = req.body || {};
-  const cmdDisplay = command ? command.substring(0, 200) : '';
+  const cmdDisplay = command ? escapeTelegramHtml(String(command).substring(0, 200)) : '';
   const text = message ||
-    `✅ Task completed in <b>${session || 'unknown'}</b>\n<code>${cmdDisplay}</code>\nDuration: ${duration || '?'}s`;
+    `✅ Task completed in <b>${escapeTelegramHtml(session || 'unknown')}</b>\n<code>${cmdDisplay}</code>\nDuration: ${escapeTelegramHtml(duration || '?')}s`;
   const ok = await sendTelegramMessage(text);
   res.json({ ok });
 });
@@ -258,9 +440,9 @@ function isValidName(name) {
 
 function getTmuxSessions() {
   try {
-    const output = execSync(
-      'tmux list-sessions -F "#{session_name}||#{session_attached}"',
-      { encoding: 'utf8', timeout: 5000 }
+    const output = execFileSync(
+      'tmux', ['list-sessions', '-F', '#{session_name}||#{session_attached}'],
+      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }
     );
     const map = {};
     output.trim().split('\n').filter(Boolean).forEach(line => {
@@ -275,7 +457,7 @@ function getTmuxSessions() {
 
 function killTmuxSession(tmuxName) {
   try {
-    execSync(`tmux kill-session -t '${tmuxName}'`, { timeout: 5000 });
+    execFileSync('tmux', ['kill-session', '-t', '=' + tmuxName], { timeout: 5000, stdio: 'ignore' });
   } catch {
     // session may already be dead
   }
@@ -498,7 +680,7 @@ app.post('/api/projects/:id/sessions', authMiddleware, (req, res) => {
       'INSERT INTO sessions (project_id, name, tmux_name) VALUES (?, ?, ?)'
     ).run(projectId, name, tmuxName);
 
-    execSync(`tmux new-session -d -s '${tmuxName}' -c '${cwd}'`, { timeout: 5000 });
+    execFileSync('tmux', ['new-session', '-d', '-s', tmuxName, '-c', cwd], { timeout: 5000, stdio: 'ignore' });
     res.json({ id: result.lastInsertRowid, name, tmux_name: tmuxName });
   } catch (e) {
     // Clean up DB row if tmux failed
@@ -588,12 +770,9 @@ app.get('/api/files/read', authMiddleware, (req, res) => {
   }
 });
 
-app.get('/api/files/download', (req, res, next) => {
-  // Allow token via query param for direct links (img src, download)
-  const t = req.query.token || req.headers.authorization?.replace('Bearer ', '');
-  if (t && tokens.has(t)) return next();
-  res.status(401).json({ error: 'Unauthorized' });
-}, (req, res) => {
+// The client fetches with the Authorization header and builds a blob URL,
+// so the token never appears in a URL, server log or browser history.
+app.get('/api/files/download', authMiddleware, (req, res) => {
   const filePath = req.query.path;
   if (!filePath) return res.status(400).json({ error: 'path is required' });
   try {
@@ -651,9 +830,18 @@ server.on('upgrade', (req, socket, head) => {
   }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
+    ws.authToken = token;
     wss.emit('connection', ws, req);
   });
 });
+
+// Close open terminals whose token has expired or whose password changed
+// (password-file mode: editing the file signs every open terminal out).
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!tokens.has(ws.authToken)) ws.close(4401, 'Signed out');
+  }
+}, 15 * 1000).unref();
 
 // Spawn a pty attached to a tmux target and wire it to the WebSocket.
 // onExit is called when the pty exits (defaults to closing the WS normally).
@@ -729,11 +917,9 @@ wss.on('connection', (ws, req) => {
   }
 
   // Ensure tmux session exists
-  try {
-    execSync(`tmux has-session -t '${tmuxName}'`, { timeout: 5000 });
-  } catch {
+  if (!tmuxHasSession(tmuxName)) {
     try {
-      execSync(`tmux new-session -d -s '${tmuxName}' -c '${HOME_DIR}'`, { timeout: 5000 });
+      execFileSync('tmux', ['new-session', '-d', '-s', tmuxName, '-c', HOME_DIR], { timeout: 5000, stdio: 'ignore' });
     } catch {
       ws.close(1011, 'Failed to create session');
       return;

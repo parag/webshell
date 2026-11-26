@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0d1117">
 <title>Grid — webshell</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<link rel="stylesheet" href="/vendor/xterm/xterm.css">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   :root { color-scheme: dark; }
@@ -276,9 +276,9 @@
 <div class="toast" id="copy-toast" role="status" hidden></div>
 <div class="toast" id="notice-toast" role="status" aria-live="polite" hidden><span id="notice-text"></span><button id="notice-action" hidden></button></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+<script src="/vendor/xterm/xterm.js"></script>
+<script src="/vendor/xterm/addon-fit.js"></script>
+<script src="/vendor/xterm/addon-web-links.js"></script>
 <script>
 (function() {
   'use strict';
@@ -676,7 +676,7 @@
         this.ws = null;
         this._clearTimers();
         if (event.code === 4404) { this._markDead('gone'); return; }
-        if (event.code === 1008) {
+        if (event.code === 1008 || event.code === 4401) {
           this._markDead('rejected');
           this.hooks.onRejected(this); // lets the app check whether the token expired
           return;
